@@ -1,0 +1,51 @@
+id_programa,nombre,tipo,duracion_anios,id_facultad
+1,Ingeniería Civil,Grado,5,1
+2,Ingeniería Eléctrica,Grado,5,1
+3,Ingeniería Electrónica,Grado,5,1
+4,Ingeniería Mecánica,Grado,5,1
+5,Ingeniería Química,Grado,5,1
+6,Ingeniería en Sistemas de Información,Grado,5,1
+7,Ingeniería Industrial,Grado,5,1
+8,Ingeniería Aeronáutica,Grado,5,1
+9,Ingeniería Naval,Grado,5,1
+10,Ingeniería en Electromecánica,Grado,5,2
+11,Ingeniería Civil,Grado,5,2
+12,Ingeniería en Sistemas de Información,Grado,5,2
+13,Ingeniería Industrial,Grado,5,2
+14,Ingeniería Mecánica,Grado,5,2
+15,Ingeniería Eléctrica,Grado,5,3
+16,Ingeniería en Sistemas de Información,Grado,5,3
+17,Ingeniería Industrial,Grado,5,3
+18,Ingeniería Civil,Grado,5,3
+19,Ingeniería Química,Grado,5,3
+20,Ingeniería Civil,Grado,5,4
+21,Ingeniería Electrónica,Grado,5,4
+22,Ingeniería en Sistemas de Información,Grado,5,4
+23,Ingeniería Industrial,Grado,5,4
+24,Ingeniería Mecánica,Grado,5,4
+25,Ingeniería en Sistemas de Información,Grado,5,5
+26,Ingeniería Industrial,Grado,5,5
+27,Ingeniería Civil,Grado,5,5
+28,Ingeniería Electrónica,Grado,5,5
+29,Ingeniería en Sistemas de Información,Grado,5,6
+30,Ingeniería Industrial,Grado,5,6
+31,Ingeniería Civil,Grado,5,6
+32,Ingeniería Eléctrica,Grado,5,6
+33,Ingeniería en Sistemas de Información,Grado,5,7
+34,Ingeniería Civil,Grado,5,7
+35,Ingeniería Electrónica,Grado,5,7
+36,Ingeniería Industrial,Grado,5,8
+37,Ingeniería en Sistemas de Información,Grado,5,8
+38,Ingeniería Civil,Grado,5,8
+39,Ingeniería Mecánica,Grado,5,8
+40,Ingeniería en Sistemas de Información,Grado,5,18
+41,Ingeniería Industrial,Grado,5,18
+42,Ingeniería Civil,Grado,5,18
+43,Tecnicatura Universitaria en Programación,Pregrado,3,1
+44,Tecnicatura Universitaria en Programación,Pregrado,3,2
+45,Tecnicatura Universitaria en Programación,Pregrado,3,6
+46,Licenciatura en Administración Rural,Grado,5,10
+47,Ingeniería en Sistemas de Información,Grado,5,11
+48,Ingeniería Industrial,Grado,5,11
+49,Ingeniería en Sistemas de Información,Grado,5,22
+50,Ingeniería Industrial,Grado,5,22

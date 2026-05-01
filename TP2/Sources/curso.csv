@@ -1,0 +1,46 @@
+id_curso,codigo,nombre,horas_teorica,horas_ejercicios,horas_laboratorio,anio_plan,nivel
+1,MAT1001,Análisis Matemático I,60,30,0,2019,1
+2,MAT1002,Álgebra y Geometría Analítica,60,30,0,2019,1
+3,FIS1001,Física I,45,30,15,2019,1
+4,QUI1001,Química General,30,15,30,2019,1
+5,INF1001,Algoritmos y Estructuras de Datos,30,15,30,2019,1
+6,MAT2001,Análisis Matemático II,60,30,0,2019,2
+7,MAT2002,Probabilidad y Estadística,45,30,0,2019,2
+8,FIS2001,Física II,45,30,15,2019,2
+9,INF2001,Programación Orientada a Objetos,30,15,30,2019,2
+10,INF2002,Arquitectura de Computadoras,45,15,15,2019,2
+11,MAT3001,Análisis Matemático III,45,30,0,2019,3
+12,INF3001,Base de Datos,30,15,30,2019,3
+13,INF3002,Ingeniería de Software I,45,15,15,2019,3
+14,INF3003,Sistemas Operativos,30,15,30,2019,3
+15,INF3004,Paradigmas de Programación,45,15,15,2019,3
+16,INF3005,Redes de Computadoras,30,15,30,2019,3
+17,INF4001,Ingeniería de Software II,45,15,15,2019,4
+18,INF4002,Inteligencia Artificial,30,15,30,2019,4
+19,INF4003,Gestión de Proyectos,45,15,0,2019,4
+20,INF4004,Seguridad Informática,30,15,30,2019,4
+21,INF4005,Diseño de Sistemas,45,15,15,2019,4
+22,INF5001,Proyecto Final,15,0,60,2019,5
+23,ADM1001,Administración General,60,15,0,2019,1
+24,ADM2001,Economía General,60,15,0,2019,2
+25,ADM3001,Contabilidad y Costos,45,30,0,2019,3
+26,MEC1001,Mecánica Aplicada,45,30,15,2019,1
+27,MEC2001,Resistencia de Materiales,45,30,15,2019,2
+28,MEC3001,Máquinas y Herramientas,30,15,45,2019,3
+29,ELE1001,Circuitos Eléctricos,45,30,15,2019,1
+30,ELE2001,Electrónica Analógica,30,15,45,2019,2
+31,ELE3001,Sistemas de Control,45,15,30,2019,3
+32,ELE3002,Comunicaciones,30,15,30,2019,3
+33,CIV1001,Topografía,30,15,30,2019,1
+34,CIV2001,Mecánica de Suelos,30,15,30,2019,2
+35,CIV3001,Estructuras,45,30,15,2019,3
+36,CIV4001,Hidráulica,30,15,30,2019,4
+37,IND3001,Investigación Operativa,45,30,0,2019,3
+38,IND4001,Logística y Cadena de Suministro,45,15,0,2019,4
+39,IND4002,Gestión de la Calidad,45,15,0,2019,4
+40,QUI2001,Química Orgánica,30,15,30,2019,2
+41,QUI3001,Química Industrial,30,15,45,2019,3
+42,MAT1003,Matemática Discreta,45,30,0,2019,1
+43,INF2003,Programación Concurrente,30,15,30,2019,2
+44,INF4006,Aprendizaje Automático,30,15,30,2023,4
+45,INF4007,Desarrollo de Aplicaciones Web,30,15,30,2023,4

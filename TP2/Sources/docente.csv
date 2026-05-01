@@ -1,0 +1,41 @@
+id_docente,apellido,nombre,titulo,categoria,dedicacion,id_departamento
+1,García,Carlos Alberto,Ingeniero en Sistemas,Titular,Exclusiva,1
+2,Rodríguez,María Elena,Doctora en Ciencias de la Computación,Titular,Exclusiva,1
+3,López,Roberto Augusto,Ingeniero Civil,Asociado,Semi-exclusiva,2
+4,Martínez,Ana Paula,Magíster en Matemática Aplicada,Adjunto,Simple,3
+5,González,Héctor Luis,Doctor en Física,Titular,Exclusiva,3
+6,Fernández,Silvina Beatriz,Ingeniera Electrónica,Adjunto,Semi-exclusiva,4
+7,Sánchez,Jorge Osvaldo,Magíster en Ingeniería Industrial,Titular,Semi-exclusiva,5
+8,Ramírez,Patricia Andrea,Doctora en Química,Titular,Exclusiva,6
+9,Torres,Diego Marcelo,Ingeniero Mecánico,Adjunto,Simple,7
+10,Flores,Gabriela Inés,Magíster en Sistemas de Información,Asociado,Semi-exclusiva,1
+11,Ruiz,Pablo Sebastián,Doctor en Ingeniería,Titular,Exclusiva,2
+12,Morales,Claudia Verónica,Ingeniera Industrial,Adjunto,Simple,5
+13,Jiménez,Facundo Ezequiel,Magíster en Ciencias de la Computación,Adjunto,Semi-exclusiva,1
+14,Herrera,Valeria Soledad,Ingeniera Electrónica,Adjunto,Simple,4
+15,Medina,Gustavo Raúl,Doctor en Matemática,Titular,Exclusiva,3
+16,Castro,Natalia Belén,Magíster en Telecomunicaciones,Adjunto,Semi-exclusiva,4
+17,Vargas,Eduardo Martín,Ingeniero en Sistemas,Adjunto,Simple,1
+18,Romero,Alejandra Cecilia,Doctora en Ingeniería Industrial,Asociado,Semi-exclusiva,5
+19,Gutiérrez,Marcelo Adrián,Magíster en Inteligencia Artificial,Adjunto,Semi-exclusiva,1
+20,Díaz,Carolina Florencia,Ingeniera Civil,Adjunto,Simple,2
+21,Reyes,Fernando Daniel,Doctor en Física,Asociado,Semi-exclusiva,3
+22,Moreno,Luciana Paola,Ingeniera Química,Adjunto,Simple,6
+23,Álvarez,Sebastián Nicolás,Magíster en Gestión de Proyectos,Adjunto,Semi-exclusiva,5
+24,Rojas,Verónica Adriana,Doctora en Ciencias de la Computación,Titular,Exclusiva,1
+25,Ortega,Cristian Ariel,Ingeniero Mecánico,Adjunto,Simple,7
+26,Pereira,Mariana Soledad,Magíster en Matemática,Adjunto,Semi-exclusiva,3
+27,Núñez,Alejandro José,Ingeniero Electrónico,Adjunto,Simple,4
+28,Cabrera,Florencia Daniela,Doctora en Ingeniería,Asociado,Semi-exclusiva,2
+29,Ibáñez,Ignacio Ramón,Magíster en Seguridad Informática,Adjunto,Semi-exclusiva,1
+30,Ríos,Susana Graciela,Ingeniera Industrial,Adjunto,Simple,5
+31,Acosta,Leandro Damián,Doctor en Ingeniería Civil,Titular,Exclusiva,2
+32,Vega,Sofía Valentina,Magíster en Ciencias de la Computación,Adjunto,Semi-exclusiva,1
+33,Campos,Rodrigo Matías,Ingeniero en Sistemas,Adjunto,Simple,1
+34,Serrano,Mónica Patricia,Doctora en Química Industrial,Asociado,Semi-exclusiva,6
+35,Domínguez,Tomás Agustín,Magíster en Electrónica,Adjunto,Semi-exclusiva,4
+36,Molina,Pilar Estela,Ingeniera Civil,Adjunto,Simple,2
+37,Suárez,Nicolás Emilio,Magíster en Redes,Adjunto,Semi-exclusiva,1
+38,Ponce,Mariela Noelia,Doctora en Ciencias Básicas,Titular,Exclusiva,3
+39,Vera,Luis Alberto,Ingeniero Industrial,Adjunto,Simple,5
+40,Fuentes,Sandra Mabel,Magíster en Sistemas Embebidos,Adjunto,Semi-exclusiva,4
