@@ -62,3 +62,39 @@
 2026-05-01 17:14:50,707 - INFO - Cargados 694 registros en stg_curso_programa
 2026-05-01 17:14:50,709 - INFO - Carga completada exitosamente
 2026-05-01 17:14:52,435 - INFO - Validación post-carga completada
+2026-05-01 17:19:36,071 - INFO - Iniciando proceso de carga
+2026-05-01 17:19:36,072 - INFO - Procesando estudiante.csv -> stg_estudiante
+2026-05-01 17:19:36,108 - INFO - TRUNCATE ejecutado en stg_estudiante
+2026-05-01 17:19:40,618 - INFO - Cargados 130000 registros en stg_estudiante
+2026-05-01 17:19:40,625 - INFO - Procesando docente.csv -> stg_docente
+2026-05-01 17:19:40,651 - INFO - TRUNCATE ejecutado en stg_docente
+2026-05-01 17:19:40,660 - INFO - Cargados 40 registros en stg_docente
+2026-05-01 17:19:40,661 - INFO - Procesando dictado.csv -> stg_dictado
+2026-05-01 17:19:40,689 - INFO - TRUNCATE ejecutado en stg_dictado
+2026-05-01 17:19:40,763 - INFO - Cargados 2261 registros en stg_dictado
+2026-05-01 17:19:40,764 - INFO - Procesando inscripcion.csv -> stg_inscripcion
+2026-05-01 17:19:40,787 - INFO - TRUNCATE ejecutado en stg_inscripcion
+2026-05-01 17:20:08,642 - INFO - Cargados 1003413 registros en stg_inscripcion
+2026-05-01 17:20:08,664 - INFO - Procesando examen.csv -> stg_examen
+2026-05-01 17:20:08,703 - INFO - TRUNCATE ejecutado en stg_examen
+2026-05-01 17:20:35,442 - INFO - Cargados 890389 registros en stg_examen
+2026-05-01 17:20:35,466 - INFO - Procesando evaluacion_curso.csv -> stg_evaluacion_curso
+2026-05-01 17:20:35,497 - INFO - TRUNCATE ejecutado en stg_evaluacion_curso
+2026-05-01 17:20:35,728 - INFO - Cargados 8360 registros en stg_evaluacion_curso
+2026-05-01 17:20:35,729 - INFO - Procesando facultad.csv -> stg_facultad
+2026-05-01 17:20:35,755 - INFO - TRUNCATE ejecutado en stg_facultad
+2026-05-01 17:20:35,765 - INFO - Cargados 25 registros en stg_facultad
+2026-05-01 17:20:35,766 - INFO - Procesando departamento.csv -> stg_departamento
+2026-05-01 17:20:35,789 - INFO - TRUNCATE ejecutado en stg_departamento
+2026-05-01 17:20:35,797 - INFO - Cargados 58 registros en stg_departamento
+2026-05-01 17:20:35,798 - INFO - Procesando programa.csv -> stg_programa
+2026-05-01 17:20:35,825 - INFO - TRUNCATE ejecutado en stg_programa
+2026-05-01 17:20:35,834 - INFO - Cargados 50 registros en stg_programa
+2026-05-01 17:20:35,835 - INFO - Procesando curso.csv -> stg_curso
+2026-05-01 17:20:35,863 - INFO - TRUNCATE ejecutado en stg_curso
+2026-05-01 17:20:35,873 - INFO - Cargados 45 registros en stg_curso
+2026-05-01 17:20:35,874 - INFO - Procesando curso_programa.csv -> stg_curso_programa
+2026-05-01 17:20:35,901 - INFO - TRUNCATE ejecutado en stg_curso_programa
+2026-05-01 17:20:35,927 - INFO - Cargados 694 registros en stg_curso_programa
+2026-05-01 17:20:35,928 - INFO - Carga completada exitosamente
+2026-05-01 17:41:02,965 - INFO - Iniciando carga. Log: e:\Documentos\Facu\2026\ADE\ADE2026_TpiUniversidad\TP2\ETL_CargaInicial\logs\carga_staging_20260501_174102.log
