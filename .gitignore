@@ -1,5 +1,4 @@
 .env
-# También es buena idea ignorar carpetas de Python y entornos virtuales
 __pycache__/
 venv/
 .ipynb_checkpoints/
