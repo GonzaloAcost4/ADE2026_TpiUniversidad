@@ -1,0 +1,41 @@
+2026-05-01 16:43:06,264 - INFO - Iniciando carga. Log: carga_staging_20260501_164306.log
+2026-05-01 16:43:06,290 - INFO - Iniciando proceso de carga
+2026-05-01 16:43:06,496 - ERROR - Fallo en carga de estudiante.csv
+2026-05-01 16:43:06,497 - ERROR - Fallo en carga de docente.csv
+2026-05-01 16:43:06,497 - ERROR - Fallo en carga de dictado.csv
+2026-05-01 16:43:06,498 - ERROR - Fallo en carga de inscripcion.csv
+2026-05-01 16:43:06,498 - ERROR - Fallo en carga de examen.csv
+2026-05-01 16:43:06,499 - ERROR - Fallo en carga de evaluacion_curso.csv
+2026-05-01 16:43:06,499 - ERROR - Fallo en carga de facultad.csv
+2026-05-01 16:43:06,500 - ERROR - Fallo en carga de departamento.csv
+2026-05-01 16:43:06,504 - ERROR - Fallo en carga de programa.csv
+2026-05-01 16:43:06,504 - ERROR - Fallo en carga de curso.csv
+2026-05-01 16:43:06,505 - ERROR - Fallo en carga de curso_programa.csv
+2026-05-01 16:43:06,515 - ERROR - Error en validación: Not an executable object: 'SELECT COUNT(*) as total FROM stg_estudiante'
+2026-05-01 16:43:51,276 - ERROR - Error en validación: Not an executable object: 'SELECT COUNT(*) as total FROM stg_estudiante'
+2026-05-01 16:49:05,732 - INFO - Iniciando carga. Log: carga_staging_20260501_164905.log
+2026-05-01 16:49:05,756 - INFO - Iniciando proceso de carga
+2026-05-01 16:49:05,934 - INFO - TRUNCATE ejecutado en stg_estudiante
+2026-05-01 16:49:10,884 - INFO - Cargados 130000 registros en stg_estudiante
+2026-05-01 16:49:10,930 - INFO - TRUNCATE ejecutado en stg_docente
+2026-05-01 16:49:10,943 - INFO - Cargados 40 registros en stg_docente
+2026-05-01 16:49:10,978 - INFO - TRUNCATE ejecutado en stg_dictado
+2026-05-01 16:49:11,052 - INFO - Cargados 2261 registros en stg_dictado
+2026-05-01 16:49:11,091 - INFO - TRUNCATE ejecutado en stg_inscripcion
+2026-05-01 16:49:37,906 - INFO - Cargados 1003413 registros en stg_inscripcion
+2026-05-01 16:49:37,970 - INFO - TRUNCATE ejecutado en stg_examen
+2026-05-01 16:50:02,047 - INFO - Cargados 890389 registros en stg_examen
+2026-05-01 16:50:02,134 - INFO - TRUNCATE ejecutado en stg_evaluacion_curso
+2026-05-01 16:50:02,356 - INFO - Cargados 8360 registros en stg_evaluacion_curso
+2026-05-01 16:50:02,395 - INFO - TRUNCATE ejecutado en stg_facultad
+2026-05-01 16:50:02,405 - INFO - Cargados 25 registros en stg_facultad
+2026-05-01 16:50:02,446 - INFO - TRUNCATE ejecutado en stg_departamento
+2026-05-01 16:50:02,456 - INFO - Cargados 58 registros en stg_departamento
+2026-05-01 16:50:02,497 - INFO - TRUNCATE ejecutado en stg_programa
+2026-05-01 16:50:02,508 - INFO - Cargados 50 registros en stg_programa
+2026-05-01 16:50:02,546 - INFO - TRUNCATE ejecutado en stg_curso
+2026-05-01 16:50:02,557 - INFO - Cargados 45 registros en stg_curso
+2026-05-01 16:50:02,602 - INFO - TRUNCATE ejecutado en stg_curso_programa
+2026-05-01 16:50:02,626 - INFO - Cargados 694 registros en stg_curso_programa
+2026-05-01 16:50:02,627 - INFO - Carga completada exitosamente
+2026-05-01 16:50:04,135 - INFO - Validación post-carga completada
