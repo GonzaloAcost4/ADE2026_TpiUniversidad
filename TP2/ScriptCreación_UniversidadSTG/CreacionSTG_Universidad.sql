@@ -156,16 +156,3 @@ CREATE TABLE stg_evaluacion_curso (
     valoracion_general_raw VARCHAR(50) NULL,
     INDEX IX_stg_eval_id (id_evaluacion_raw)
 ) ENGINE=InnoDB;
-
---- EJEMPLO DE CARGA MASIVA (LOAD DATA)
-/*
-LOAD DATA INFILE '/ruta/datos/estudiantes_ingreso_2026.csv'
-INTO TABLE stg_estudiante
-FIELDS TERMINATED BY ',' 
-ENCLOSED BY '"'
-LINES TERMINATED BY '\n'
-IGNORE 1 ROWS
-(id_estudiante_raw, dni_raw, apellido_raw, nombre_raw, genero_raw, fecha_nacimiento_raw, email_raw, telefono_raw, nacionalidad_raw, id_programa_raw, anio_ingreso_raw)
-SET archivo_origen = 'estudiantes_ingreso_2026.csv',
-    fecha_carga = CURRENT_TIMESTAMP;
-*/
