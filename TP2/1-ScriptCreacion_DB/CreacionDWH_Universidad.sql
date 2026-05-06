@@ -1,7 +1,7 @@
 CREATE DATABASE IF NOT EXISTS dw_universidad;
 USE dw_universidad; 
 
---- Tabla Dimensión: Tiempo
+-- Tabla Dimensión: Tiempo
 CREATE TABLE Tiempo (
     tiempoSKey INT PRIMARY KEY,
     fecha DATE NOT NULL,
@@ -12,7 +12,7 @@ CREATE TABLE Tiempo (
     esFeriado BOOLEAN DEFAULT FALSE
 ) ENGINE=InnoDB;
 
---- Tabla Dimensión: Dictado
+-- Tabla Dimensión: Dictado
 CREATE TABLE Dictado (
     dictadoSKey INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
     idDictado INT NOT NULL,
@@ -41,7 +41,7 @@ CREATE TABLE Dictado (
     CONSTRAINT chk_vigencia_dictado CHECK (valid_to IS NULL OR valid_to >= valid_from)
 ) ENGINE=InnoDB;
 
---- Tabla Dimensión: Alumno
+-- Tabla Dimensión: Alumno
 CREATE TABLE Alumno (
     alumnoSKey INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
     idalumno INT NOT NULL,
@@ -67,7 +67,7 @@ CREATE TABLE Alumno (
     CONSTRAINT chk_vigencia_alumno CHECK (valid_to IS NULL OR valid_to >= valid_from)
 ) ENGINE=InnoDB;
 
---- Tabla de Hecho: ExamenAlumno
+-- Tabla de Hecho: ExamenAlumno
 CREATE TABLE ExamenAlumno (
     examAlumSK INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
     alumnoSKey INT NOT NULL,
@@ -82,7 +82,7 @@ CREATE TABLE ExamenAlumno (
     CONSTRAINT fk_exam_dictado FOREIGN KEY (dictadoSKey) REFERENCES Dictado(dictadoSKey)
 ) ENGINE=InnoDB;
 
---- Tabla de Hecho: EvaluacionDictado
+-- Tabla de Hecho: EvaluacionDictado
 CREATE TABLE EvaluacionDictado (
     evalDicSKey INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
     dictadoSKey INT NOT NULL,
@@ -96,7 +96,7 @@ CREATE TABLE EvaluacionDictado (
     CONSTRAINT fk_eval_tiempo FOREIGN KEY (tiempoSKey) REFERENCES Tiempo(tiempoSKey)
 ) ENGINE=InnoDB;
 
---- Tabla de Hecho: Inscripcion
+-- Tabla de Hecho: Inscripcion
 CREATE TABLE Inscripcion (
     InscripSKey INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
     alumnoSKey INT NOT NULL,

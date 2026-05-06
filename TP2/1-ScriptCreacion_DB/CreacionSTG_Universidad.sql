@@ -1,7 +1,7 @@
 CREATE DATABASE IF NOT EXISTS STG_Universidad;
 USE STG_Universidad;
 
---- Tabla 1: STG_ESTUDIANTE
+-- Tabla 1: STG_ESTUDIANTE
 CREATE TABLE stg_estudiante (
     row_id BIGINT AUTO_INCREMENT PRIMARY KEY,
     archivo_origen VARCHAR(255) NULL,
@@ -20,7 +20,7 @@ CREATE TABLE stg_estudiante (
     INDEX IX_stg_estudiante_id (id_estudiante_raw)
 ) ENGINE=InnoDB;
 
---- Tabla 2: STG_DOCENTE
+-- Tabla 2: STG_DOCENTE
 CREATE TABLE stg_docente (
     row_id BIGINT AUTO_INCREMENT PRIMARY KEY,
     archivo_origen VARCHAR(255) NULL,
@@ -35,7 +35,7 @@ CREATE TABLE stg_docente (
     INDEX IX_stg_docente_id (id_docente_raw)
 ) ENGINE=InnoDB;
 
---- Tabla 3: STG_DEPARTAMENTO
+-- Tabla 3: STG_DEPARTAMENTO
 CREATE TABLE stg_departamento (
     row_id BIGINT AUTO_INCREMENT PRIMARY KEY,
     archivo_origen VARCHAR(255) NULL,
@@ -46,7 +46,7 @@ CREATE TABLE stg_departamento (
     INDEX IX_stg_depto_id (id_departamento_raw)
 ) ENGINE=InnoDB;
 
---- Tabla 4: STG_FACULTAD
+-- Tabla 4: STG_FACULTAD
 CREATE TABLE stg_facultad (
     row_id BIGINT AUTO_INCREMENT PRIMARY KEY,
     archivo_origen VARCHAR(255) NULL,
@@ -58,7 +58,7 @@ CREATE TABLE stg_facultad (
     INDEX IX_stg_facultad_id (id_facultad_raw)
 ) ENGINE=InnoDB;
 
---- Tabla 5: STG_PROGRAMA
+-- Tabla 5: STG_PROGRAMA
 CREATE TABLE stg_programa (
     row_id BIGINT AUTO_INCREMENT PRIMARY KEY,
     archivo_origen VARCHAR(255) NULL,
@@ -71,7 +71,7 @@ CREATE TABLE stg_programa (
     INDEX IX_stg_programa_id (id_programa_raw)
 ) ENGINE=InnoDB;
 
---- Tabla 6: STG_CURSO
+-- Tabla 6: STG_CURSO
 CREATE TABLE stg_curso (
     row_id BIGINT AUTO_INCREMENT PRIMARY KEY,
     archivo_origen VARCHAR(255) NULL,
@@ -87,7 +87,7 @@ CREATE TABLE stg_curso (
     INDEX IX_stg_curso_id (id_curso_raw)
 ) ENGINE=InnoDB;
 
---- Tabla 7: STG_CURSO_PROGRAMA
+-- Tabla 7: STG_CURSO_PROGRAMA
 CREATE TABLE stg_curso_programa (
     row_id BIGINT AUTO_INCREMENT PRIMARY KEY,
     archivo_origen VARCHAR(255) NULL,
@@ -98,7 +98,7 @@ CREATE TABLE stg_curso_programa (
     INDEX IX_stg_cur_prog_prog (id_programa_raw)
 ) ENGINE=InnoDB;
 
---- Tabla 8: STG_DICTADO
+-- Tabla 8: STG_DICTADO
 CREATE TABLE stg_dictado (
     row_id BIGINT AUTO_INCREMENT PRIMARY KEY,
     archivo_origen VARCHAR(255) NULL,
@@ -115,7 +115,7 @@ CREATE TABLE stg_dictado (
     INDEX IX_stg_dictado_id (id_dictado_raw)
 ) ENGINE=InnoDB;
 
---- Tabla 9: STG_INSCRIPCION
+-- Tabla 9: STG_INSCRIPCION
 CREATE TABLE stg_inscripcion (
     row_id BIGINT AUTO_INCREMENT PRIMARY KEY,
     archivo_origen VARCHAR(255) NULL,
@@ -129,7 +129,7 @@ CREATE TABLE stg_inscripcion (
     INDEX IX_stg_inscrip_est (id_estudiante_raw)
 ) ENGINE=InnoDB;
 
---- Tabla 10: STG_EXAMEN
+-- Tabla 10: STG_EXAMEN
 CREATE TABLE stg_examen (
     row_id BIGINT AUTO_INCREMENT PRIMARY KEY,
     archivo_origen VARCHAR(255) NULL,
@@ -144,7 +144,7 @@ CREATE TABLE stg_examen (
     INDEX IX_stg_examen_ins (id_inscripcion_raw)
 ) ENGINE=InnoDB;
 
---- Tabla 11: STG_EVALUACION_CURSO
+-- Tabla 11: STG_EVALUACION_CURSO
 CREATE TABLE stg_evaluacion_curso (
     row_id BIGINT AUTO_INCREMENT PRIMARY KEY,
     archivo_origen VARCHAR(255) NULL,
