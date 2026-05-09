@@ -9,33 +9,30 @@ El objetivo de esta etapa no es copiar las tablas staging tal como vienen, sino 
 El script `transformacion.py` carga las tablas reales del DWH:
 
 - Dimensiones:
-  - `Tiempo`
-  - `Alumno`
-  - `Dictado`
+  - `dim_tiempo`
+  - `dim_estudiante`
+  - `dim_dictado`
 - Hechos:
-  - `Inscripcion`
-  - `ExamenAlumno`
-  - `EvaluacionDictado`
-
-No se cargan tablas operacionales como `Facultad`, `Departamento`, `Programa`, `Curso`, `Docente` o `Estudiante` porque no existen como tablas independientes en el DWH. Sus datos se integran en las dimensiones `Alumno` y `Dictado`.
+  - `fact_inscripcion`
+  - `fact_examen_estudiante`
+  - `fact_evaluacion_dictado`
 
 ## Archivos principales
 
 - `carga_staging.py`: carga los CSV desde `TP2/Sources` hacia las tablas staging.
 - `transformacion.py`: limpia, normaliza, transforma y carga el DWH dimensional.
 - `logs/`: carpeta donde se guardan los logs de ejecución.
-- `transformacion.py.bak`: copia de seguridad del script anterior.
 
 ## Cambio realizado sobre `stg_evaluacion_curso`
 
-La tabla de hecho `EvaluacionDictado` del DWH requiere:
+La tabla de hecho `fact_evaluacion_dictado` del DWH requiere:
 
-- `dictadoSKey`
-- `alumnoSKey`
-- `tiempoSKey`
-- `notaDictado`
-- `notaCont`
-- `notaGeneral`
+- `dictado_skey`
+- `estudiante_skey`
+- `tiempo_skey`
+- `nota_dictado`
+- `nota_cont`
+- `nota_general`
 
 La fuente original `evaluacion_curso.csv` solo tenía:
 
@@ -50,7 +47,7 @@ Por eso se agregaron en staging:
 - `id_estudiante_raw`
 - `fecha_evaluacion_raw`
 
-Estos campos permiten resolver `alumnoSKey` y `tiempoSKey`, que son obligatorios en el DWH.
+Estos campos permiten resolver `estudiante_skey` y `tiempo_skey`, que son obligatorios en el DWH.
 
 Estos campos ya quedaron incorporados directamente en:
 
@@ -290,7 +287,7 @@ Si `id_estudiante_raw` o `fecha_evaluacion_raw` no existen en staging, los regis
 Se construye desde las fechas usadas por hechos:
 
 - `fecha_inscripcion`
-- `fecha` de examen
+- `fecha de examen`
 - `fecha_evaluacion`
 
 El `tiempoSKey` se calcula como `YYYYMMDD`.

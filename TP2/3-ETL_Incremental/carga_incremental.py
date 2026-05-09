@@ -398,14 +398,18 @@ def procesar_incremental() -> Dict:
     mapa_dictado = base_etl.obtener_mapa_dictado()
     mapa_tiempo = base_etl.obtener_mapa_tiempo()
 
-    hechos_insertados = {"Inscripcion": 0, "ExamenAlumno": 0, "EvaluacionDictado": 0}
+    hechos_insertados = {
+        "fact_inscripcion": 0,
+        "fact_examen_alumno": 0,
+        "fact_evaluacion_dictado": 0,
+    }
 
     if not deltas_limpios.get("inscripciones", pd.DataFrame()).empty:
         fact_inscripcion, _ = base_etl.construir_fact_inscripcion(
             deltas_limpios["inscripciones"], mapa_alumno, mapa_dictado, mapa_tiempo
         )
-        hechos_insertados["Inscripcion"] = insert_ignore_dataframe(
-            fact_inscripcion, "Inscripcion"
+        hechos_insertados["fact_inscripcion"] = insert_ignore_dataframe(
+            fact_inscripcion, "fact_inscripcion"
         )
 
     if not deltas_limpios.get("examenes", pd.DataFrame()).empty:
@@ -422,22 +426,22 @@ def procesar_incremental() -> Dict:
             mapa_dictado,
             mapa_tiempo,
         )
-        hechos_insertados["ExamenAlumno"] = insert_ignore_dataframe(
-            fact_examen, "ExamenAlumno"
+        hechos_insertados["fact_examen_alumno"] = insert_ignore_dataframe(
+            fact_examen, "fact_examen_alumno"
         )
 
     if not deltas_limpios.get("evaluaciones", pd.DataFrame()).empty:
         fact_evaluacion, _ = base_etl.construir_fact_evaluacion_dictado(
             deltas_limpios["evaluaciones"], mapa_dictado, mapa_alumno, mapa_tiempo
         )
-        hechos_insertados["EvaluacionDictado"] = insert_ignore_dataframe(
-            fact_evaluacion, "EvaluacionDictado"
+        hechos_insertados["fact_evaluacion_dictado"] = insert_ignore_dataframe(
+            fact_evaluacion, "fact_evaluacion_dictado"
         )
 
     print(
-        f"  Inscripcion={hechos_insertados['Inscripcion']} | "
-        f"ExamenAlumno={hechos_insertados['ExamenAlumno']} | "
-        f"EvaluacionDictado={hechos_insertados['EvaluacionDictado']}"
+        f"  fact_inscripcion={hechos_insertados['fact_inscripcion']} | "
+        f"fact_examen_alumno={hechos_insertados['fact_examen_alumno']} | "
+        f"fact_evaluacion_dictado={hechos_insertados['fact_evaluacion_dictado']}"
     )
 
     total_delta = sum(len(df) for df in deltas_raw.values())

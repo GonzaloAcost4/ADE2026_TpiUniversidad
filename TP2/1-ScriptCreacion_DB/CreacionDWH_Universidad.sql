@@ -1,111 +1,112 @@
+DROP DATABASE IF EXISTS dw_universidad;
 CREATE DATABASE IF NOT EXISTS dw_universidad;
-USE dw_universidad; 
+USE dw_universidad;
 
 -- Tabla Dimensión: Tiempo
-CREATE TABLE Tiempo (
-    tiempoSKey INT PRIMARY KEY,
+CREATE TABLE dim_tiempo (
+    tiempo_skey INT PRIMARY KEY,
     fecha DATE NOT NULL,
     dia INT NOT NULL,
     mes VARCHAR(20) NOT NULL,
-    año INT NOT NULL,
-    periodoAcademico VARCHAR(50),
-    esFeriado BOOLEAN DEFAULT FALSE
+    anio INT NOT NULL,
+    periodo_academico VARCHAR(50),
+    es_feriado BOOLEAN DEFAULT FALSE
 ) ENGINE=InnoDB;
 
 -- Tabla Dimensión: Dictado
-CREATE TABLE Dictado (
-    dictadoSKey INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
-    idDictado INT NOT NULL,
+CREATE TABLE dim_dictado (
+    dictado_skey INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    id_dictado INT NOT NULL,
     periodo INT,
     turno VARCHAR(50),
     aula VARCHAR(50),
-    cupoMax INT,
-    codigoCurso VARCHAR(20),
-    nombreCurso VARCHAR(100),
-    horasTeoCurso INT,
-    horasPracCurso INT,
-    horasLabCurso INT,
-    nivelCurso INT,
-    nombreDocente VARCHAR(100),
-    apellidoDocente VARCHAR(100),
-    tituloDocente VARCHAR(100),
-    categoriaDocente VARCHAR(100),
-    dedicacionDocente VARCHAR(100),
-    nombreDep VARCHAR(100),
-    nombreFac VARCHAR(100),
-    ciudadFac VARCHAR(100),
-    provFac VARCHAR(100),
+    cupo_max INT,
+    codigo_curso VARCHAR(20),
+    nombre_curso VARCHAR(100),
+    horas_teoria INT,
+    horas_practica INT,
+    horas_lab INT,
+    nivel_curso INT,
+    nombre_docente VARCHAR(100),
+    apellido_docente VARCHAR(100),
+    titulo_docente VARCHAR(100),
+    categoria_docente VARCHAR(100),
+    dedicacion_docente VARCHAR(100),
+    nombre_dpto VARCHAR(100),
+    nombre_fac VARCHAR(100),
+    ciudad_fac VARCHAR(100),
+    prov_fac VARCHAR(100),
     valid_from DATE NOT NULL,
     valid_to DATE,
     es_actual BOOLEAN DEFAULT TRUE,
     CONSTRAINT chk_vigencia_dictado CHECK (valid_to IS NULL OR valid_to >= valid_from)
 ) ENGINE=InnoDB;
 
--- Tabla Dimensión: Alumno
-CREATE TABLE Alumno (
-    alumnoSKey INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
-    idalumno INT NOT NULL,
+-- Tabla Dimensión: estudiante
+CREATE TABLE dim_estudiante (
+    estudiante_skey INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    id_estudiante INT NOT NULL,
     dni INT NOT NULL,
     nombre VARCHAR(100),
     apellido VARCHAR(100),
     genero VARCHAR(20),
-    fechaNacim DATE,
+    fecha_nac DATE,
     nacionalidad VARCHAR(50),
-    añoIngreso DATE,
-    edadIngreso INT,
-    egresoCarrera BOOLEAN DEFAULT FALSE,
-    añoEgreso DATE,
-    abandonoCarrera BOOLEAN DEFAULT FALSE,
-    añoAbandono DATE,
-    nombrePrograma VARCHAR(100),
-    tipoPrograma VARCHAR(50),
-    duracionAñosPrograma INT,
-    añoPlanPrograma DATE,
+    anio_ingreso DATE,
+    edad_ingreso INT,
+    egreso_carrera BOOLEAN DEFAULT FALSE,
+    anio_egreso DATE,
+    abandono_carrera BOOLEAN DEFAULT FALSE,
+    anio_abandono DATE,
+    nombre_prog VARCHAR(100),
+    tipo_prog VARCHAR(50),
+    duracion_prog INT,
+    anio_plan_prog DATE,
     valid_from DATE NOT NULL,
     valid_to DATE,
     es_actual BOOLEAN DEFAULT TRUE,
-    CONSTRAINT chk_vigencia_alumno CHECK (valid_to IS NULL OR valid_to >= valid_from)
+    CONSTRAINT chk_vigencia_estudiante CHECK (valid_to IS NULL OR valid_to >= valid_from)
 ) ENGINE=InnoDB;
 
--- Tabla de Hecho: ExamenAlumno
-CREATE TABLE ExamenAlumno (
-    examAlumSK INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
-    alumnoSKey INT NOT NULL,
-    tiempoSKey INT NOT NULL,
-    dictadoSKey INT NOT NULL,
+-- Tabla de Hecho: Examenestudiante
+CREATE TABLE fact_examen_estudiante (
+    exam_alum_skey INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    estudiante_skey INT NOT NULL,
+    tiempo_skey INT NOT NULL,
+    dictado_skey INT NOT NULL,
     nota DECIMAL(4,2),
-    nroIntentos INT,
+    n_intentos INT,
     aprobado BOOLEAN,
-    UNIQUE (alumnoSKey, dictadoSKey, nroIntentos),
-    CONSTRAINT fk_exam_alumno FOREIGN KEY (alumnoSKey) REFERENCES Alumno(alumnoSKey),
-    CONSTRAINT fk_exam_tiempo FOREIGN KEY (tiempoSKey) REFERENCES Tiempo(tiempoSKey),
-    CONSTRAINT fk_exam_dictado FOREIGN KEY (dictadoSKey) REFERENCES Dictado(dictadoSKey)
+    UNIQUE (estudiante_skey, dictado_skey, n_intentos),
+    CONSTRAINT fk_exam_estudiante FOREIGN KEY (estudiante_skey) REFERENCES estudiante(estudiante_skey),
+    CONSTRAINT fk_exam_tiempo FOREIGN KEY (tiempo_skey) REFERENCES Tiempo(tiempo_skey),
+    CONSTRAINT fk_exam_dictado FOREIGN KEY (dictado_skey) REFERENCES Dictado(dictado_skey)
 ) ENGINE=InnoDB;
 
 -- Tabla de Hecho: EvaluacionDictado
-CREATE TABLE EvaluacionDictado (
-    evalDicSKey INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
-    dictadoSKey INT NOT NULL,
-    alumnoSKey INT NOT NULL,
-    tiempoSKey INT NOT NULL,
-    notaDictado DECIMAL(5,2),
-    notaCont DECIMAL(5,2),
-    notaGeneral DECIMAL(5,2),
-    CONSTRAINT fk_eval_dictado FOREIGN KEY (dictadoSKey) REFERENCES Dictado(dictadoSKey),
-    CONSTRAINT fk_eval_alumno FOREIGN KEY (alumnoSKey) REFERENCES Alumno(alumnoSKey),
-    CONSTRAINT fk_eval_tiempo FOREIGN KEY (tiempoSKey) REFERENCES Tiempo(tiempoSKey)
+CREATE TABLE fact_evaluacion_dictado (
+    eval_dic_skey INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    dictado_skey INT NOT NULL,
+    estudiante_skey INT NOT NULL,
+    tiempo_skey INT NOT NULL,
+    nota_dictado DECIMAL(5,2),
+    nota_cont DECIMAL(5,2),
+    nota_general DECIMAL(5,2),
+    CONSTRAINT fk_eval_dictado FOREIGN KEY (dictado_skey) REFERENCES Dictado(dictado_skey),
+    CONSTRAINT fk_eval_estudiante FOREIGN KEY (estudiante_skey) REFERENCES estudiante(estudiante_skey),
+    CONSTRAINT fk_eval_tiempo FOREIGN KEY (tiempo_skey) REFERENCES Tiempo(tiempo_skey)
 ) ENGINE=InnoDB;
 
 -- Tabla de Hecho: Inscripcion
-CREATE TABLE Inscripcion (
-    InscripSKey INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
-    alumnoSKey INT NOT NULL,
-    tiempoSKey INT NOT NULL,
-    dictadoSKey INT NOT NULL,
+CREATE TABLE fact_inscripcion (
+    inscrip_skey INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    estudiante_skey INT NOT NULL,
+    tiempo_skey INT NOT NULL,
+    dictado_skey INT NOT NULL,
     estado VARCHAR(50),
     abandono BOOLEAN DEFAULT FALSE,
-    UNIQUE (alumnoSKey, dictadoSKey),
-    CONSTRAINT fk_ins_alumno FOREIGN KEY (alumnoSKey) REFERENCES Alumno(alumnoSKey),
-    CONSTRAINT fk_ins_tiempo FOREIGN KEY (tiempoSKey) REFERENCES Tiempo(tiempoSKey),
-    CONSTRAINT fk_ins_dictado FOREIGN KEY (dictadoSKey) REFERENCES Dictado(dictadoSKey)
+    UNIQUE (estudiante_skey, dictado_skey),
+    CONSTRAINT fk_ins_estudiante FOREIGN KEY (estudiante_skey) REFERENCES estudiante(estudiante_skey),
+    CONSTRAINT fk_ins_tiempo FOREIGN KEY (tiempo_skey) REFERENCES Tiempo(tiempo_skey),
+    CONSTRAINT fk_ins_dictado FOREIGN KEY (dictado_skey) REFERENCES Dictado(dictado_skey)
 ) ENGINE=InnoDB;
