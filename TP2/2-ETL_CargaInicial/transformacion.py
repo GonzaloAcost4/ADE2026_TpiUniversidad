@@ -1,54 +1,27 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-################################################################################
-# SCRIPT: transformacion.py
-################################################################################
-# PROPÓSITO GENERAL:
-# Script ETL que transforma datos CRUDOS de STAGING (STG_Universidad)
-# hacia un modelo DIMENSIONAL del Data Warehouse (dw_universidad).
-#
-# ARQUITECTURA:
-#
-#  STG_Universidad (STAGING)               dw_universidad (DWH - DIMENSIONAL)
-#  ════════════════════════════════════    ════════════════════════════════════
-#  stg_estudiante                          DIMENSIONES:
-#  stg_docente                             ├─ Tiempo (fechas con calendarios)
-#  stg_dictado                             ├─ Alumno (con programa integrado)
-#  stg_inscripcion        ──TRANSFORMA──→  └─ Dictado (con docente+curso+depto)
-#  stg_examen                              
-#  stg_evaluacion_curso                    HECHOS (medibles):
-#  stg_facultad                            ├─ Inscripcion (alumno×dictado)
-#  stg_departamento                        ├─ ExamenAlumno (notas por intento)
-#  stg_programa                            └─ EvaluacionDictado (puntajes)
-#  stg_curso
-#  stg_curso_programa
-#
-# FLUJO DE TRANSFORMACIÓN:
-# 1. Lectura: Leer datos CRUDOS desde tablas STG_*
-# 2. Limpieza: Validar tipos, formatos, rangos
-# 3. Normalización: Mapeos de valores, denormalización
-# 4. Construcción: Armar dimensiones (con SKeys) y hechos
-# 5. Truncate: Vaciar tablas DWH (idempotencia)
-# 6. Carga: Insertar dimensiones → luego hechos (respetando FK)
-# 7. Reporting: Estadísticas finales
-#
-# ESTRATEGIA DE CARGA:
-# - TRUNCATE + Full Load: Garantiza idempotencia (ejecutar N veces = resultado igual)
-# - SCD Tipo 1 (Dimensiones): Sobrescribe valores cuando cambian
-# - Surrogate Keys: Claves técnicas (SK) para BD, claves naturales (ID) para lógica
-#
-# MANEJO DE DATOS DENORMALIZADOS:
-# - Estudiante + Programa → DIMENSIÓN Alumno (integra ambos)
-# - Dictado + Curso + Docente + Depto + Facultad → DIMENSIÓN Dictado
-# - Razón: DWH no tiene tablas operacionales (Faculty, Department, etc)
-#   Solo tiene dimensiones denormalizadas + hechos
-#
-# OUTPUT:
-# - Logs: 2-ETL_CargaInicial/logs/transformacion_YYYYMMDD_HHMMSS.log
-# - BD: Tablas DWH pobladas (Tiempo, Alumno, Dictado, Inscripcion, etc)
-#
-################################################################################
+"""
+ETL Transformación - De STG_Universidad a dw_universidad
+
+Este script transforma los datos crudos de staging hacia el modelo dimensional
+real del Data Warehouse definido en CreacionDWH_Universidad.sql:
+
+Dimensiones:
+- dim_tiempo
+- dim_estudiante
+- dim_dictado
+
+Hechos:
+- fact_inscripcion
+- fact_examen_estudiante
+- fact_evaluacion_dictado
+
+La transformación NO carga tablas operacionales intermedias como Facultad,
+Departamento, Programa, Curso, Docente o Estudiante, porque esas tablas no
+existen en el esquema dimensional del DWH. Sus datos se integran/denormalizan
+dentro de las dimensiones estudiante y Dictado.
+"""
 
 import logging
 import os
@@ -65,41 +38,34 @@ from sqlalchemy.pool import NullPool
 
 warnings.filterwarnings("ignore")
 
-################################################################################
-# CONFIGURACIÓN: RUTAS, IMPORTS DEL PROYECTO
-################################################################################
+# ============================================
+# RUTAS E IMPORTS DEL PROYECTO
+# ============================================
 
-# Determinar directorio del script
 try:
     SCRIPT_DIR = Path(__file__).resolve().parent
 except NameError:
-    # Si se ejecuta desde notebook o REPL
     SCRIPT_DIR = Path.cwd().resolve()
 
-# Directorio del proyecto TP2
 PROJECT_TP2_DIR = SCRIPT_DIR.parent
 if str(PROJECT_TP2_DIR) not in sys.path:
     sys.path.append(str(PROJECT_TP2_DIR))
 
-# Importar LoggerManager centralizado
 from logging_config import LoggerManager
 
-################################################################################
-# CONFIGURACIÓN: CREDENCIALES Y CONEXIONES
-################################################################################
+# ============================================
+# CONFIGURACIÓN DE CREDENCIALES Y CONEXIÓN
+# ============================================
 
-# Cargar variables de entorno
 load_dotenv()
 
-# Obtener credenciales
 USER = os.getenv("DB_USER")
 PASSWORD = os.getenv("DB_PASSWORD")
 HOST = os.getenv("DB_HOST")
 PORT = os.getenv("DB_PORT")
-STG_DATABASE = os.getenv("STG_DATABASE")      # Base STAGING (lectura)
-DWH_DATABASE = os.getenv("DWH_DATABASE")      # Base DWH (escritura)
+STG_DATABASE = os.getenv("STG_DATABASE")
+DWH_DATABASE = os.getenv("DWH_DATABASE")
 
-# Validar que todas las variables estén presentes
 VARIABLES_REQUERIDAS = {
     "DB_USER": USER,
     "DB_PASSWORD": PASSWORD,
@@ -116,19 +82,16 @@ if faltantes:
         + ", ".join(faltantes)
     )
 
-# Motor #1: Lectura desde STAGING (datos crudos)
 engine_stg = create_engine(
     f"mysql+pymysql://{USER}:{PASSWORD}@{HOST}:{PORT}/{STG_DATABASE}",
     poolclass=NullPool,
 )
 
-# Motor #2: Escritura en DWH (datos transformados)
 engine_dwh = create_engine(
     f"mysql+pymysql://{USER}:{PASSWORD}@{HOST}:{PORT}/{DWH_DATABASE}",
     poolclass=NullPool,
 )
 
-# Configurar logging
 logger = LoggerManager.configurar(
     "transformacion",
     ruta_raiz=str(SCRIPT_DIR),
@@ -143,28 +106,27 @@ for handler in logger.handlers:
 
 print(f"[OK] Conexiones configuradas | STG={STG_DATABASE} | DWH={DWH_DATABASE}")
 
-
 # ============================================
-# CONSTANTES DEL DWH
+# CONSTANTES DEL DWH (nuevos nombres según CreacionDWH_Universidad.sql)
 # ============================================
 
 TABLAS_DWH = [
-    "Tiempo",
-    "Dictado",
-    "Alumno",
-    "Inscripcion",
-    "ExamenAlumno",
-    "EvaluacionDictado",
+    "dim_tiempo",
+    "dim_dictado",
+    "dim_estudiante",
+    "fact_inscripcion",
+    "fact_examen_estudiante",
+    "fact_evaluacion_dictado",
 ]
 
-# Primero hechos, luego dimensiones. Se desactivan FK checks durante el truncate.
+# Orden de truncado: hechos primero, luego dimensiones
 ORDEN_TRUNCATE = [
-    "EvaluacionDictado",
-    "ExamenAlumno",
-    "Inscripcion",
-    "Alumno",
-    "Dictado",
-    "Tiempo",
+    "fact_evaluacion_dictado",
+    "fact_examen_estudiante",
+    "fact_inscripcion",
+    "dim_estudiante",
+    "dim_dictado",
+    "dim_tiempo",
 ]
 
 MESES_ES = {
@@ -181,7 +143,6 @@ MESES_ES = {
     11: "Noviembre",
     12: "Diciembre",
 }
-
 
 # ============================================
 # FUNCIONES DE LIMPIEZA Y VALIDACIÓN
@@ -394,40 +355,6 @@ class DataCleaner:
 def estadisticas(
     total: int, validos: int, duplicados: int = 0, motivo: Optional[str] = None
 ) -> Dict[str, object]:
-    """
-    ════════════════════════════════════════════════════════════════════════════
-    FUNCIÓN: estadisticas(total, validos, duplicados, motivo)
-    ════════════════════════════════════════════════════════════════════════════
-    
-    INPUT:
-    - total: cantidad total de registros procesados
-    - validos: cantidad de registros que pasaron validación
-    - duplicados: cantidad de registros eliminados por duplicación
-    - motivo: descripción opcional del proceso (p.ej., "por DNI")
-    
-    OUTPUT:
-    Dict con estructura de estadísticas:
-    {
-        'total': N total,
-        'válidos': N válidos,
-        'rechazados': N que fallaron validación,
-        'duplicados': N que eran copias,
-        'motivo': descripción (opcional)
-    }
-    
-    CÁLCULO DE RECHAZADOS:
-    rechazados = total - válidos - duplicados
-    (ej: 100 total, 80 válidos, 10 duplicados → 10 rechazados)
-    
-    REUTILIZACIÓN:
-    Utilizada por todas las funciones transformar_*_base()
-    para retornar estadísticas consistentes.
-    
-    EJEMPLO:
-    >>> stats = estadisticas(total=100, validos=85, duplicados=5)
-    >>> stats['rechazados']
-    10
-    """
     total_int = int(total)
     validos_int = int(validos)
     duplicados_int = int(duplicados)
@@ -445,79 +372,16 @@ def estadisticas(
 
 
 def leer_tabla_staging(nombre_tabla: str) -> pd.DataFrame:
-    """
-    ════════════════════════════════════════════════════════════════════════════
-    FUNCIÓN: leer_tabla_staging(nombre_tabla)
-    ════════════════════════════════════════════════════════════════════════════
-    
-    INPUT: nombre_tabla (str) - Nombre de tabla STG_* a leer
-    OUTPUT: DataFrame con todos los registros de la tabla
-    
-    TRATAMIENTO:
-    1. Conectar a BD STAGING (engine_stg)
-    2. Ejecutar SELECT * FROM tabla
-    3. Registrar en logs
-    4. Retornar DataFrame
-    
-    EJEMPLO:
-    >>> df = leer_tabla_staging('stg_estudiante')
-    >>> len(df)
-    1250  # 1250 estudiantes leídos
-    """
     LoggerManager.info(f"Leyendo staging: {nombre_tabla}")
     return pd.read_sql(f"SELECT * FROM {nombre_tabla}", con=engine_stg)
 
 
 def contar_tabla_dwh(nombre_tabla: str) -> int:
-    """
-    ════════════════════════════════════════════════════════════════════════════
-    FUNCIÓN: contar_tabla_dwh(nombre_tabla)
-    ════════════════════════════════════════════════════════════════════════════
-    
-    INPUT: nombre_tabla (str) - Nombre de tabla en DWH
-    OUTPUT: int - Cantidad de registros en esa tabla
-    
-    PROPÓSITO:
-    Verificar integridad después de carga:
-    ¿Cuántos registros se cargaron exitosamente?
-    
-    EJEMPLO:
-    >>> count = contar_tabla_dwh('Alumno')
-    >>> print(f"Tabla Alumno tiene {count} registros")
-    Tabla Alumno tiene 1200 registros
-    """
     with engine_dwh.connect() as conn:
         return int(conn.execute(text(f"SELECT COUNT(*) FROM {nombre_tabla}")).scalar())
 
 
 def fecha_desde_anio(anio) -> Optional[date]:
-    """
-    ════════════════════════════════════════════════════════════════════════════
-    FUNCIÓN: fecha_desde_anio(anio)
-    ════════════════════════════════════════════════════════════════════════════
-    
-    INPUT: anio - Año (entero, string, None, etc)
-    OUTPUT: date|None - 1 de enero de ese año, o None si inválido
-    
-    LÓGICA DE VALIDACIÓN:
-    1. Limpiar: convertir a entero
-    2. Validar rango: 1900 a (año actual + 10)
-    3. Si OK: retornar date(año, 1, 1)
-    4. Si falla: registrar warning y retornar None
-    
-    RANGO ACEPTABLE:
-    - Mínimo: 1900 (registros históricos)
-    - Máximo: año actual + 10 (para ingreso futuro)
-    - Fuera: marcar como inválido
-    
-    EJEMPLO:
-    >>> fecha_desde_anio(2023)
-    datetime.date(2023, 1, 1)
-    >>> fecha_desde_anio("1999")
-    datetime.date(1999, 1, 1)
-    >>> fecha_desde_anio(1800)  # Muy viejo
-    None  # + warning en logs
-    """
     anio_limpio = DataCleaner.limpiar_numero(anio, "int")
     if anio_limpio is None:
         return None
@@ -530,35 +394,6 @@ def fecha_desde_anio(anio) -> Optional[date]:
 def calcular_edad(
     fecha_nacimiento: Optional[date], fecha_ingreso: Optional[date]
 ) -> Optional[int]:
-    """
-    ════════════════════════════════════════════════════════════════════════════
-    FUNCIÓN: calcular_edad(fecha_nacimiento, fecha_ingreso)
-    ════════════════════════════════════════════════════════════════════════════
-    
-    INPUT:
-    - fecha_nacimiento: date de nacimiento
-    - fecha_ingreso: date de ingreso a la carrera
-    
-    OUTPUT: int|None - Edad en años al ingresar (o None si inválida)
-    
-    CÁLCULO:
-    1. Diferencia de años: ingreso.año - nacimiento.año
-    2. Ajustar si aún no pasó cumpleaños en año actual
-    3. Validar rango: 0 a 120 años
-    4. Si fuera de rango: retornar None
-    
-    VALIDACIÓN DE RANGO:
-    - Edad < 0: imposible (error de datos)
-    - Edad > 120: probablemente error (asumimos estudiante < 120)
-    - Edad típica: 18-65 años
-    
-    EJEMPLO:
-    >>> calcular_edad(
-    ...     fecha_nacimiento=date(2000, 5, 15),
-    ...     fecha_ingreso=date(2020, 3, 1)
-    ... )
-    19  # 19 años en el ingreso
-    """
     if not fecha_nacimiento or not fecha_ingreso:
         return None
     edad = fecha_ingreso.year - fecha_nacimiento.year
@@ -571,34 +406,6 @@ def calcular_edad(
 
 
 def tiempo_skey(fecha: Optional[date]) -> Optional[int]:
-    """
-    ════════════════════════════════════════════════════════════════════════════
-    FUNCIÓN: tiempo_skey(fecha)
-    ════════════════════════════════════════════════════════════════════════════
-    
-    INPUT: fecha - Objeto date o None
-    OUTPUT: int|None - Surrogate Key (clave técnica) para la fecha
-    
-    CONVERSIÓN:
-    Convierte date a integer en formato YYYYMMDD (SCD)
-    Ejemplo:
-    - 2023-05-15 → 20230515
-    - 1999-01-01 → 19990101
-    
-    VENTAJA:
-    - Integer es más rápido para índices/joins que date
-    - Ordena naturalmente (20230101 < 20230601)
-    - Fácil para búsquedas por rango
-    
-    FÓRMULA:
-    SK = (año × 10000) + (mes × 100) + día
-    
-    EJEMPLO:
-    >>> tiempo_skey(date(2023, 5, 15))
-    20230515
-    >>> tiempo_skey(None)
-    None
-    """
     if not fecha:
         return None
     return fecha.year * 10000 + fecha.month * 100 + fecha.day
@@ -623,17 +430,12 @@ def registrar_rechazos(nombre: str, total: int, validos: int) -> None:
         LoggerManager.warning(f"{nombre}: {rechazados} registros rechazados")
 
 
-################################################################################
+# ============================================
 # TRANSFORMACIONES BASE DESDE STAGING
-################################################################################
-# 
-# PATRÓN COMÚN: Todas las funciones transformar_*_base() siguen este patrón:
-#
-# 1. ENTRADA: DataFrame crudo con columnas sufijadas _raw (de STG)
-# 2. LIMPIEZA: Usar DataCleaner para limpiar cada columna
-# 3. VALIDACIÓN: Crear booleano 'valido' verificando campos requeridos
-# 4. SEPARACIÓN: Dividir en válidos (pasan) e inválidos (rechazan)
-# 5. DEDUPLICACIÓN: Eliminar duplicados por claves naturales (id_principal, DNI, etc)\n# 6. SALIDA: (DataFrame limpio, Dict con estadísticas)\n#\n# ESTADÍSTICAS RETORNADAS:\n# {\n#     'total': N registros entrada,\n#     'válidos': N que pasaron validación,\n#     'rechazados': N que fallaron,\n#     'duplicados': N eliminados por duplicación\n# }\n#\n# REUTILIZACIÓN:\n# Estas funciones se usan en AMBOS procesos:\n# - Carga Inicial: transformacion.ipynb\n# - Carga Incremental: carga_incremental.py (importa como base_etl.transformar_*)\n#\n################################################################################\n\ndef transformar_estudiante_base(df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict]:\n    \"\"\"\n    ════════════════════════════════════════════════════════════════════════════\n    FUNCIÓN: transformar_estudiante_base(df)\n    ════════════════════════════════════════════════════════════════════════════\n    \n    INPUT: DataFrame de stg_estudiante (columnas suffixadas _raw)\n    OUTPUT: (DataFrame limpio de estudiantes, estadísticas de transformación)\n    \n    LIMPIEZA POR COLUMNA:\n    1. id_estudiante: entero positivo (clave primaria en STG)\n    2. dni: entero, validar rango argentino 7-8 dígitos\n    3. apellido, nombre: strings limpios (sin espacios/encoding)\n    4. género: normalizar a M/F/X\n    5. fecha_nacimiento: parsear múltiples formatos\n    6. nacionalidad: string limpio\n    7. id_programa: entero (FK a Programa)\n    8. año_ingreso: convertir a date(año, 1, 1)\n    \n    VALIDACIÓN DE FILA:\n    Una fila es VÁLIDA si:\n    - id_estudiante NOT NULL\n    - DNI válido (7-8 dígitos argentinos)\n    - apellido NOT NULL\n    - nombre NOT NULL\n    - id_programa NOT NULL\n    \n    DEDUPLICACIÓN:\n    - Eliminar duplicados por id_estudiante (clave única)\n    - Eliminar duplicados por DNI (identificación única)\n    - Mantener primer registro en caso de duplicado\n    \n    TRATAMIENTO DE ERRORES:\n    - Campos nulos: rechazan la fila\n    - Encoding corrupto (mojibake): intenta reparar\n    - DNI inválido: rechaza fila\n    - Fecha no parseable: pone NULL en fecha_nacimiento\n    \n    EJEMPLO:\n    Input DataFrame:\n    | id_estudiante_raw | dni_raw    | apellido_raw | ... |\n    | '100'             | '35.678.901'| ' Pérez '   | ... |\n    \n    Output DataFrame:\n    | id_estudiante | dni      | apellido | ... |\n    | 100           | 35678901 | Pérez   | ... |\n    \n    Output Estadísticas:\n    {\n        'total': 1500,\n        'válidos': 1350,\n        'rechazados': 100,\n        'duplicados': 50\n    }\n    \"\"\""
+# ============================================
+
+
+def transformar_estudiante_base(df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict]:
     cleaner = DataCleaner()
     total = len(df)
     df = df.copy()
@@ -1052,13 +854,13 @@ def construir_dim_tiempo(fechas: Iterable[Optional[date]]) -> Tuple[pd.DataFrame
     for fecha in fechas_validas:
         registros.append(
             {
-                "tiempoSKey": tiempo_skey(fecha),
+                "tiempo_skey": tiempo_skey(fecha),
                 "fecha": fecha,
                 "dia": fecha.day,
                 "mes": MESES_ES[fecha.month],
-                "año": fecha.year,
-                "periodoAcademico": periodo_academico(fecha),
-                "esFeriado": False,
+                "anio": fecha.year,
+                "periodo_academico": periodo_academico(fecha),
+                "es_feriado": False,
             }
         )
 
@@ -1066,7 +868,7 @@ def construir_dim_tiempo(fechas: Iterable[Optional[date]]) -> Tuple[pd.DataFrame
     return df_tiempo, estadisticas(len(fechas_validas), len(df_tiempo), 0)
 
 
-def construir_dim_alumno(
+def construir_dim_estudiante(
     estudiantes: pd.DataFrame, programas: pd.DataFrame
 ) -> Tuple[pd.DataFrame, Dict]:
     total = len(estudiantes)
@@ -1075,7 +877,7 @@ def construir_dim_alumno(
     faltan_programas = df["nombre_programa"].isna().sum()
     if faltan_programas > 0:
         LoggerManager.warning(
-            f"Alumno: {faltan_programas} estudiantes sin programa encontrado; se cargan con atributos de programa NULL"
+            f"estudiante: {faltan_programas} estudiantes sin programa encontrado; se cargan con atributos de programa NULL"
         )
 
     df["edadIngreso"] = df.apply(
@@ -1087,30 +889,32 @@ def construir_dim_alumno(
 
     resultado = pd.DataFrame(
         {
-            "idalumno": df["id_estudiante"],
+            "id_estudiante": df["id_estudiante"],
             "dni": df["dni"],
             "nombre": df["nombre"],
             "apellido": df["apellido"],
             "genero": df["genero"],
-            "fechaNacim": df["fecha_nacimiento"],
+            "fecha_nac": df["fecha_nacimiento"],
             "nacionalidad": df["nacionalidad"],
-            "añoIngreso": df["fecha_ingreso"],
-            "edadIngreso": df["edadIngreso"],
-            "egresoCarrera": False,
-            "añoEgreso": None,
-            "abandonoCarrera": False,
-            "añoAbandono": None,
-            "nombrePrograma": df["nombre_programa"],
-            "tipoPrograma": df["tipo_programa"],
-            "duracionAñosPrograma": df["duracion_anios_programa"],
-            "añoPlanPrograma": None,
+            "anio_ingreso": df["fecha_ingreso"],
+            "edad_ingreso": df["edadIngreso"],
+            "egreso_carrera": False,
+            "anio_egreso": None,
+            "abandono_carrera": False,
+            "anio_abandono": None,
+            "nombre_prog": df["nombre_programa"],
+            "tipo_prog": df["tipo_programa"],
+            "duracion_prog": df["duracion_anios_programa"],
+            "anio_plan_prog": None,
             "valid_from": df["valid_from"],
             "valid_to": df["valid_to"],
             "es_actual": df["es_actual"],
         }
     )
 
-    resultado, duplicados = quitar_duplicados(resultado, ["idalumno"], keep="first")
+    resultado, duplicados = quitar_duplicados(
+        resultado, ["id_estudiante"], keep="first"
+    )
     return resultado, estadisticas(total, len(resultado), duplicados)
 
 
@@ -1142,33 +946,33 @@ def construir_dim_dictado(
 
     resultado = pd.DataFrame(
         {
-            "idDictado": df["id_dictado"],
+            "id_dictado": df["id_dictado"],
             "periodo": df["periodo"],
             "turno": df["turno"],
             "aula": df["aula"],
-            "cupoMax": df["cupo_maximo"],
-            "codigoCurso": df["codigo_curso"],
-            "nombreCurso": df["nombre_curso"],
-            "horasTeoCurso": df["horas_teo_curso"],
-            "horasPracCurso": df["horas_prac_curso"],
-            "horasLabCurso": df["horas_lab_curso"],
-            "nivelCurso": df["nivel_curso"],
-            "nombreDocente": df["nombre_docente"],
-            "apellidoDocente": df["apellido_docente"],
-            "tituloDocente": df["titulo_docente"],
-            "categoriaDocente": df["categoria_docente"],
-            "dedicacionDocente": df["dedicacion_docente"],
-            "nombreDep": df["nombre_departamento"],
-            "nombreFac": df["nombre_facultad"],
-            "ciudadFac": df["ciudad_facultad"],
-            "provFac": df["provincia_facultad"],
+            "cupo_max": df["cupo_maximo"],
+            "codigo_curso": df["codigo_curso"],
+            "nombre_curso": df["nombre_curso"],
+            "horas_teoria": df["horas_teo_curso"],
+            "horas_practica": df["horas_prac_curso"],
+            "horas_lab": df["horas_lab_curso"],
+            "nivel_curso": df["nivel_curso"],
+            "nombre_docente": df["nombre_docente"],
+            "apellido_docente": df["apellido_docente"],
+            "titulo_docente": df["titulo_docente"],
+            "categoria_docente": df["categoria_docente"],
+            "dedicacion_docente": df["dedicacion_docente"],
+            "nombre_dpto": df["nombre_departamento"],
+            "nombre_fac": df["nombre_facultad"],
+            "ciudad_fac": df["ciudad_facultad"],
+            "prov_fac": df["provincia_facultad"],
             "valid_from": date.today(),
             "valid_to": None,
             "es_actual": True,
         }
     )
 
-    resultado, duplicados = quitar_duplicados(resultado, ["idDictado"], keep="first")
+    resultado, duplicados = quitar_duplicados(resultado, ["id_dictado"], keep="first")
     return resultado, estadisticas(total, len(resultado), duplicados)
 
 
@@ -1177,26 +981,26 @@ def construir_dim_dictado(
 # ============================================
 
 
-def obtener_mapa_alumno() -> Dict[int, int]:
+def obtener_mapa_estudiante() -> Dict[int, int]:
     df = pd.read_sql(
-        "SELECT alumnoSKey, idalumno FROM Alumno WHERE es_actual = TRUE",
+        "SELECT estudiante_skey, id_estudiante FROM dim_estudiante WHERE es_actual = TRUE",
         con=engine_dwh,
     )
-    return dict(zip(df["idalumno"], df["alumnoSKey"]))
+    return dict(zip(df["id_estudiante"], df["estudiante_skey"]))
 
 
 def obtener_mapa_dictado() -> Dict[int, int]:
     df = pd.read_sql(
-        "SELECT dictadoSKey, idDictado FROM Dictado WHERE es_actual = TRUE",
+        "SELECT dictado_skey, id_dictado FROM dim_dictado WHERE es_actual = TRUE",
         con=engine_dwh,
     )
-    return dict(zip(df["idDictado"], df["dictadoSKey"]))
+    return dict(zip(df["id_dictado"], df["dictado_skey"]))
 
 
 def obtener_mapa_tiempo() -> Dict[date, int]:
-    df = pd.read_sql("SELECT tiempoSKey, fecha FROM Tiempo", con=engine_dwh)
+    df = pd.read_sql("SELECT tiempo_skey, fecha FROM dim_tiempo", con=engine_dwh)
     df["fecha"] = pd.to_datetime(df["fecha"]).dt.date
-    return dict(zip(df["fecha"], df["tiempoSKey"]))
+    return dict(zip(df["fecha"], df["tiempo_skey"]))
 
 
 # ============================================
@@ -1206,16 +1010,16 @@ def obtener_mapa_tiempo() -> Dict[date, int]:
 
 def construir_fact_inscripcion(
     inscripciones: pd.DataFrame,
-    mapa_alumno: Dict[int, int],
+    mapa_estudiante: Dict[int, int],
     mapa_dictado: Dict[int, int],
     mapa_tiempo: Dict[date, int],
 ) -> Tuple[pd.DataFrame, Dict]:
     total = len(inscripciones)
     df = inscripciones.copy()
 
-    df["alumnoSKey"] = df["id_estudiante"].map(mapa_alumno)
-    df["dictadoSKey"] = df["id_dictado"].map(mapa_dictado)
-    df["tiempoSKey"] = df["fecha_inscripcion"].map(mapa_tiempo)
+    df["estudiante_skey"] = df["id_estudiante"].map(mapa_estudiante)
+    df["dictado_skey"] = df["id_dictado"].map(mapa_dictado)
+    df["tiempo_skey"] = df["fecha_inscripcion"].map(mapa_tiempo)
     df["abandono"] = (
         df["estado"]
         .fillna("")
@@ -1224,7 +1028,9 @@ def construir_fact_inscripcion(
     )
 
     valido = (
-        df["alumnoSKey"].notna() & df["dictadoSKey"].notna() & df["tiempoSKey"].notna()
+        df["estudiante_skey"].notna()
+        & df["dictado_skey"].notna()
+        & df["tiempo_skey"].notna()
     )
     validos = df[valido].copy()
     registrar_rechazos(
@@ -1232,19 +1038,19 @@ def construir_fact_inscripcion(
     )
 
     resultado = validos[
-        ["alumnoSKey", "tiempoSKey", "dictadoSKey", "estado", "abandono"]
+        ["estudiante_skey", "tiempo_skey", "dictado_skey", "estado", "abandono"]
     ].copy()
     resultado, duplicados = quitar_duplicados(
-        resultado, ["alumnoSKey", "dictadoSKey"], keep="last"
+        resultado, ["estudiante_skey", "dictado_skey"], keep="last"
     )
 
     return resultado, estadisticas(total, len(resultado), duplicados)
 
 
-def construir_fact_examen_alumno(
+def construir_fact_examen_estudiante(
     examenes: pd.DataFrame,
     inscripciones: pd.DataFrame,
-    mapa_alumno: Dict[int, int],
+    mapa_estudiante: Dict[int, int],
     mapa_dictado: Dict[int, int],
     mapa_tiempo: Dict[date, int],
 ) -> Tuple[pd.DataFrame, Dict]:
@@ -1256,41 +1062,44 @@ def construir_fact_examen_alumno(
         how="left",
     )
 
-    df["alumnoSKey"] = df["id_estudiante"].map(mapa_alumno)
-    df["dictadoSKey"] = df["id_dictado"].map(mapa_dictado)
-    df["tiempoSKey"] = df["fecha"].map(mapa_tiempo)
+    df["estudiante_skey"] = df["id_estudiante"].map(mapa_estudiante)
+    df["dictado_skey"] = df["id_dictado"].map(mapa_dictado)
+    df["tiempo_skey"] = df["fecha"].map(mapa_tiempo)
 
     valido = (
-        df["alumnoSKey"].notna() & df["dictadoSKey"].notna() & df["tiempoSKey"].notna()
+        df["estudiante_skey"].notna()
+        & df["dictado_skey"].notna()
+        & df["tiempo_skey"].notna()
     )
     validos = df[valido].copy()
     registrar_rechazos(
-        "Fact ExamenAlumno por claves no encontradas", total, len(validos)
+        "Fact Examenestudiante por claves no encontradas", total, len(validos)
     )
 
     validos = validos.sort_values(["fecha", "id_examen"])
     resultado = validos[
         [
-            "alumnoSKey",
-            "tiempoSKey",
-            "dictadoSKey",
+            "estudiante_skey",
+            "tiempo_skey",
+            "dictado_skey",
             "nota",
             "numero_intento",
             "aprobado",
         ]
     ].copy()
-    resultado = resultado.rename(columns={"numero_intento": "nroIntentos"})
+    resultado = resultado.rename(columns={"numero_intento": "n_intentos"})
     resultado, duplicados = quitar_duplicados(
-        resultado, ["alumnoSKey", "dictadoSKey", "nroIntentos"], keep="last"
+        resultado, ["estudiante_skey", "dictado_skey", "n_intentos"], keep="last"
     )
 
+    # Ajustar nombres para el fact schema (nombres: estudiante_skey, tiempo_skey, dictado_skey, nota, n_intentos, aprobado)
     return resultado, estadisticas(total, len(resultado), duplicados)
 
 
 def construir_fact_evaluacion_dictado(
     evaluaciones: pd.DataFrame,
     mapa_dictado: Dict[int, int],
-    mapa_alumno: Dict[int, int],
+    mapa_estudiante: Dict[int, int],
     mapa_tiempo: Dict[date, int],
 ) -> Tuple[pd.DataFrame, Dict]:
     """
@@ -1300,12 +1109,14 @@ def construir_fact_evaluacion_dictado(
     total = len(evaluaciones)
     df = evaluaciones.copy()
 
-    df["dictadoSKey"] = df["id_dictado"].map(mapa_dictado)
-    df["alumnoSKey"] = df["id_estudiante"].map(mapa_alumno)
-    df["tiempoSKey"] = df["fecha_evaluacion"].map(mapa_tiempo)
+    df["dictado_skey"] = df["id_dictado"].map(mapa_dictado)
+    df["estudiante_skey"] = df["id_estudiante"].map(mapa_estudiante)
+    df["tiempo_skey"] = df["fecha_evaluacion"].map(mapa_tiempo)
 
     valido = (
-        df["dictadoSKey"].notna() & df["alumnoSKey"].notna() & df["tiempoSKey"].notna()
+        df["dictado_skey"].notna()
+        & df["estudiante_skey"].notna()
+        & df["tiempo_skey"].notna()
     )
     validos = df[valido].copy()
     registrar_rechazos(
@@ -1315,9 +1126,9 @@ def construir_fact_evaluacion_dictado(
     validos = validos.sort_values(["fecha_evaluacion", "id_evaluacion"])
     resultado = validos[
         [
-            "dictadoSKey",
-            "alumnoSKey",
-            "tiempoSKey",
+            "dictado_skey",
+            "estudiante_skey",
+            "tiempo_skey",
             "puntaje_dictado",
             "puntaje_contenido",
             "valoracion_general",
@@ -1325,13 +1136,13 @@ def construir_fact_evaluacion_dictado(
     ].copy()
     resultado = resultado.rename(
         columns={
-            "puntaje_dictado": "notaDictado",
-            "puntaje_contenido": "notaCont",
-            "valoracion_general": "notaGeneral",
+            "puntaje_dictado": "nota_dictado",
+            "puntaje_contenido": "nota_cont",
+            "valoracion_general": "nota_general",
         }
     )
     resultado, duplicados = quitar_duplicados(
-        resultado, ["dictadoSKey", "alumnoSKey", "tiempoSKey"], keep="last"
+        resultado, ["dictado_skey", "estudiante_skey", "tiempo_skey"], keep="last"
     )
 
     return resultado, estadisticas(total, len(resultado), duplicados)
@@ -1402,6 +1213,26 @@ def insertar_dataframe(
 def cargar_tabla(
     nombre_tabla: str, df: pd.DataFrame, reporte: Dict, stats_transformacion: Dict
 ) -> None:
+    # Verificar si la tabla destino está vacía antes de insertar
+    with engine_dwh.connect() as conn:
+        try:
+            count = int(
+                conn.execute(text(f"SELECT COUNT(*) FROM {nombre_tabla}")).scalar()
+            )
+        except Exception as e:
+            LoggerManager.error(f"Error consultando tabla {nombre_tabla}: {e}")
+            raise
+
+    if count > 0:
+        LoggerManager.warning(
+            f"Tabla destino {nombre_tabla} tiene {count} registros; se ejecutará TRUNCATE previo a la carga"
+        )
+        with engine_dwh.begin() as conn:
+            conn.execute(text("SET FOREIGN_KEY_CHECKS = 0"))
+            conn.execute(text(f"TRUNCATE TABLE {nombre_tabla}"))
+            conn.execute(text("SET FOREIGN_KEY_CHECKS = 1"))
+        LoggerManager.info(f"TRUNCATE TABLE {nombre_tabla} ejecutado antes de insertar")
+
     stats_insert = insertar_dataframe(df, nombre_tabla)
     final = contar_tabla_dwh(nombre_tabla)
 
@@ -1474,7 +1305,7 @@ def ejecutar_transformacion() -> Dict:
         fechas_tiempo.extend(datos["evaluaciones"]["fecha_evaluacion"].tolist())
 
     dim_tiempo, stats_tiempo = construir_dim_tiempo(fechas_tiempo)
-    dim_alumno, stats_alumno = construir_dim_alumno(
+    dim_estudiante, stats_estudiante = construir_dim_estudiante(
         datos["estudiantes"], datos["programas"]
     )
     dim_dictado, stats_dictado = construir_dim_dictado(
@@ -1486,7 +1317,7 @@ def ejecutar_transformacion() -> Dict:
     )
 
     print(
-        f"  Dimensiones listas: Tiempo={len(dim_tiempo)} | Alumno={len(dim_alumno)} | Dictado={len(dim_dictado)}",
+        f"  Dimensiones listas: Tiempo={len(dim_tiempo)} | estudiante={len(dim_estudiante)} | Dictado={len(dim_dictado)}",
         flush=True,
     )
 
@@ -1496,34 +1327,36 @@ def ejecutar_transformacion() -> Dict:
 
     # 4. Carga de dimensiones.
     print("[4/5] Carga de dimensiones y hechos...", flush=True)
-    cargar_tabla("Tiempo", dim_tiempo, reporte, stats_tiempo)
-    cargar_tabla("Alumno", dim_alumno, reporte, stats_alumno)
-    cargar_tabla("Dictado", dim_dictado, reporte, stats_dictado)
+    cargar_tabla("dim_tiempo", dim_tiempo, reporte, stats_tiempo)
+    cargar_tabla("dim_estudiante", dim_estudiante, reporte, stats_estudiante)
+    cargar_tabla("dim_dictado", dim_dictado, reporte, stats_dictado)
 
     # 5. Obtención de surrogate keys generadas.
-    mapa_alumno = obtener_mapa_alumno()
+    mapa_estudiante = obtener_mapa_estudiante()
     mapa_dictado = obtener_mapa_dictado()
     mapa_tiempo = obtener_mapa_tiempo()
 
     # 6. Construcción de hechos.
     fact_inscripcion, stats_fact_inscripcion = construir_fact_inscripcion(
-        datos["inscripciones"], mapa_alumno, mapa_dictado, mapa_tiempo
+        datos["inscripciones"], mapa_estudiante, mapa_dictado, mapa_tiempo
     )
-    fact_examen, stats_fact_examen = construir_fact_examen_alumno(
+    fact_examen, stats_fact_examen = construir_fact_examen_estudiante(
         datos["examenes"],
         datos["inscripciones"],
-        mapa_alumno,
+        mapa_estudiante,
         mapa_dictado,
         mapa_tiempo,
     )
     fact_evaluacion, stats_fact_evaluacion = construir_fact_evaluacion_dictado(
-        datos["evaluaciones"], mapa_dictado, mapa_alumno, mapa_tiempo
+        datos["evaluaciones"], mapa_dictado, mapa_estudiante, mapa_tiempo
     )
 
     # 7. Carga de hechos.
-    cargar_tabla("Inscripcion", fact_inscripcion, reporte, stats_fact_inscripcion)
-    cargar_tabla("ExamenAlumno", fact_examen, reporte, stats_fact_examen)
-    cargar_tabla("EvaluacionDictado", fact_evaluacion, reporte, stats_fact_evaluacion)
+    cargar_tabla("fact_inscripcion", fact_inscripcion, reporte, stats_fact_inscripcion)
+    cargar_tabla("fact_examen_estudiante", fact_examen, reporte, stats_fact_examen)
+    cargar_tabla(
+        "fact_evaluacion_dictado", fact_evaluacion, reporte, stats_fact_evaluacion
+    )
 
     # 8. Reporte final.
     imprimir_reporte(reporte)
