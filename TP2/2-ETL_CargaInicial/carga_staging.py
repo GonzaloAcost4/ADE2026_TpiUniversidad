@@ -1,45 +1,92 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[1]:
+################################################################################
+# SCRIPT: carga_staging.py
+################################################################################
+# PROPÓSITO GENERAL:
+# Script ETL que carga datos desde archivos CSV en la carpeta Sources/ hacia
+# las tablas de STAGING en la base de datos MySQL STG_Universidad.
+#
+# FLUJO DE DATOS:
+# CSV Files (Sources/) → Pandas DataFrames → MySQL STG_* Tables
+#
+# PASOS PRINCIPALES:
+# 1. Leer archivos CSV desde Sources/
+# 2. Limpiar y validar datos (en pasos posteriores)
+# 3. Ejecutar TRUNCATE en tablas staging (idempotencia)
+# 4. Insertar datos completos y frescos en staging
+# 5. Registrar estadísticas y errores en logs
+#
+# CARACTERÍSTICAS:
+# - TRUNCATE + Full Load Strategy: garantiza idempotencia
+# - Enriquecimiento especial para evaluacion_curso
+# - Diagnóstico pre-carga completo
+# - Logging centralizado con LoggerManager
+# - Manejo de errores con rollback automático
+#
+# OUTPUT:
+# - Logs: 2-ETL_CargaInicial/logs/carga_staging_YYYYMMDD_HHMMSS.log
+# - BD: Tablas stg_* pobladas en STG_Universidad
+#
+################################################################################
 
+# IMPORTS ESTÁNDAR DE PYTHON
+import os                    # Manejo de rutas y directorios
+import sys                   # Manipulación de sys.path
+from datetime import datetime, timedelta  # Manejo de fechas
 
-import os
-import sys
-from datetime import datetime, timedelta
+# IMPORTS DE TERCEROS
+import pandas as pd                    # Manipulación de DataFrames
+from dotenv import load_dotenv         # Lectura de variables de entorno
+from sqlalchemy import create_engine, text  # Conexión SQL y ejecución de queries
 
-import pandas as pd
-from dotenv import load_dotenv
-from sqlalchemy import create_engine, text
-
-# Agregar ruta del proyecto al path para importar módulos
+# CONFIGURACIÓN DE RUTAS Y MÓDULOS
+# Agregar directorio padre (TP2/) a sys.path para importar logging_config.py
 sys.path.append(os.path.join(os.getcwd(), ".."))
 
-# Importar el LoggerManager
+# Importar el LoggerManager centralizado del proyecto
 from logging_config import LoggerManager
 
-# Configuración de credenciales
+################################################################################
+# CONFIGURACIÓN: CREDENCIALES Y CONEXIÓN A BD
+################################################################################
+
+# Cargar variables de entorno desde .env
+# override=True: asegura que se use el .env más actual
 load_dotenv(override=True)
 
-USER = os.getenv("DB_USER")
-PASSWORD = os.getenv("DB_PASSWORD")
-HOST = os.getenv("DB_HOST")
-PORT = os.getenv("DB_PORT")
-DATABASE = os.getenv("STG_DATABASE")
+# Obtener credenciales de la base de datos desde variables de entorno
+USER = os.getenv("DB_USER")           # Usuario MySQL
+PASSWORD = os.getenv("DB_PASSWORD")   # Contraseña MySQL
+HOST = os.getenv("DB_HOST")           # Host/IP del servidor MySQL
+PORT = os.getenv("DB_PORT")           # Puerto (default 3306)
+DATABASE = os.getenv("STG_DATABASE")  # Nombre BD staging (STG_Universidad)
 
-# Crear motor de conexión
+# Crear motor SQLAlchemy para conexión a MySQL
+# Formato: mysql+pymysql://usuario:contraseña@host:puerto/base_datos
 engine = create_engine(f"mysql+pymysql://{USER}:{PASSWORD}@{HOST}:{PORT}/{DATABASE}")
 
-# Configurar logger para este proceso (logs en carpeta actual: 3-ETL_CargaInicial/logs)
+# Configurar logger centralizado para este script
+# - nombre_proceso: 'carga_staging' (aparece en logs y archivo de log)
+# - ruta_raiz: getcwd() (directorio actual: 2-ETL_CargaInicial/)
+# - carpeta_logs: 'logs' (subcarpeta donde se guardan los .log)
 logger = LoggerManager.configurar(
     "carga_staging", ruta_raiz=os.getcwd(), carpeta_logs="logs"
 )
 
-# Especificar ruta a la carpeta Sources
-RUTA_SOURCES = os.path.join(os.getcwd(), "..", "Sources")
-RUTA_SOURCES = os.path.abspath(RUTA_SOURCES)
+################################################################################
+# CONSTANTES DE RUTAS
+################################################################################
 
-# Obtener ruta de logs (creada automáticamente por LoggerManager)
+# Ruta absoluta de la carpeta Sources/ (donde están los CSV)
+# getaway(): 2-ETL_CargaInicial/
+# "..": sube a TP2/
+# "Sources": desciende a TP2/Sources/
+RUTA_SOURCES = os.path.join(os.getcwd(), "..", "Sources")
+RUTA_SOURCES = os.path.abspath(RUTA_SOURCES)  # Convertir a ruta absoluta
+
+# Obtener ruta del directorio de logs (ya creado por LoggerManager)
 RUTA_LOGS = LoggerManager.obtener_ruta_logs()
 
 
@@ -48,14 +95,91 @@ RUTA_LOGS = LoggerManager.obtener_ruta_logs()
 
 def enriquecer_evaluacion_curso(df):
     """
-    Completa evaluacion_curso.csv con los datos mínimos que requiere el DWH.
-
-    El CSV original tiene evaluación por dictado, pero EvaluacionDictado necesita
-    estudiante y fecha. Para no inventar claves, se asigna cada evaluación a un
-    estudiante inscripto en el mismo dictado, usando un orden determinístico por
-    id_inscripcion. La fecha se estima con el calendario académico del dictado:
-    C1 -> 15/07 del año académico, C2 -> 15/12 del año académico. Si no se puede
-    calcular, se usa fecha_inscripcion + 90 días.
+    ================================================================================
+    FUNCIÓN: enriquecer_evaluacion_curso(df)
+    ================================================================================
+    
+    PROPÓSITO:
+    Completa el archivo evaluacion_curso.csv con datos faltantes que requiere
+    la tabla DWH (EvaluacionDictado).
+    
+    PROBLEMA QUE RESUELVE:
+    - El CSV original (evaluacion_curso.csv) tiene evaluaciones por DICTADO
+    - Pero la tabla de hecho EvaluacionDictado necesita:
+      * id_estudiante (¿Quién fue evaluado?)
+      * fecha_evaluacion (¿Cuándo se evaluó?)
+    - El CSV original NO tiene estos datos
+    - SOLUCIÓN: inferir/enriquecer con información de tablas relacionales
+    
+    INPUT (PARÁMETRO):
+    - df (DataFrame): DataFrame leído desde evaluacion_curso.csv
+      Columnas esperadas:
+      - id_evaluacion: clave única de la evaluación
+      - id_dictado: qué dictado/materia se evaluó
+      - id_evaluacion: identificador único
+      - (otros campos: puntajes, contenido, etc.)
+    
+    OUTPUT (RETORNO):
+    - DataFrame enriquecido con:
+      - id_estudiante: alumno al que se asigna la evaluación
+      - fecha_evaluacion: fecha estimada de la evaluación
+      
+    TRATAMIENTO (ALGORITMO):
+    
+    PASO 1: Validación inicial
+    - Si df está vacío: retorna vacío sin procesar
+    - Si ya tiene id_estudiante y fecha_evaluacion: retorna sin cambios
+    
+    PASO 2: Leer datos relacionales
+    - Lee inscripcion.csv: relación alumno-dictado
+    - Lee dictado.csv: información de períodos académicos
+    
+    PASO 3: Asignación determinística de estudiantes
+    - Para cada evaluación, busca estudiantes inscriptos en ese dictado
+    - Usa algoritmo módulo (%) para asignación determinística y reproducible
+    - Ejemplo: si hay 3 inscriptos y 5 evaluaciones
+      → Evaluación 0 → Inscripto 0
+      → Evaluación 1 → Inscripto 1
+      → Evaluación 2 → Inscripto 2
+      → Evaluación 3 → Inscripto 0 (repite)
+      → Evaluación 4 → Inscripto 1 (repite)
+    
+    PASO 4: Inferencia de fechas de evaluación
+    Usa lógica de calendario académico Argentina:
+    - C1 (Cuatrimestre 1): mayo-julio → Fecha estimada 15/07
+    - C2 (Cuatrimestre 2): agosto-diciembre → Fecha estimada 15/12
+    - Si no tiene período: usa fecha_inscripción + 90 días
+    
+    PASO 5: Validación final
+    - Cuenta cuántas evaluaciones no tienen estudiante asignable
+    - Registra warning si hay muchas sin asignación
+    
+    EJEMPLOS:
+    
+    Input DataFrame:
+    ┌─────────────────┬─────────────┐
+    │ id_evaluacion   │ id_dictado  │
+    ├─────────────────┼─────────────┤
+    │ 1               │ 10          │
+    │ 2               │ 10          │
+    │ 3               │ 11          │
+    └─────────────────┴─────────────┘
+    
+    Output DataFrame (con enriquecimiento):
+    ┌─────────────────┬─────────────┬─────────────────┬──────────────────┐
+    │ id_evaluacion   │ id_dictado  │ id_estudiante   │ fecha_evaluacion │
+    ├─────────────────┼─────────────┼─────────────────┼──────────────────┤
+    │ 1               │ 10          │ 100             │ 2024-07-15       │
+    │ 2               │ 10          │ 101             │ 2024-07-15       │
+    │ 3               │ 11          │ 102             │ 2024-12-15       │
+    └─────────────────┴─────────────┴─────────────────┴──────────────────┘
+    
+    NOTAS IMPORTANTES:
+    - El algoritmo es DETERMINÍSTICO: mismos inputs → siempre mismo output
+    - NO inventa DNIs ni estudiantes inexistentes
+    - NO modifica datos de estudiantes reales
+    - Solo enriquece con claves naturales existentes
+    ================================================================================
     """
     if df.empty:
         return df
@@ -154,17 +278,92 @@ def enriquecer_evaluacion_curso(df):
 
 def cargar_csv_a_staging(archivo_csv, nombre_tabla_stg):
     """
-    Lee un CSV desde Sources, lo carga con TRUNCATE (idempotente).
-
-    Estrategia: TRUNCATE + Full Load
-    - Borra datos previos de la tabla
-    - Carga datos completos y frescos
-    - Garantiza NO hay duplicados
-    - Seguro ejecutar múltiples veces
-
-    Args:
-        archivo_csv: nombre del archivo CSV (ej: 'estudiante.csv')
-        nombre_tabla_stg: nombre de la tabla staging en MySQL
+    ================================================================================
+    FUNCIÓN: cargar_csv_a_staging(archivo_csv, nombre_tabla_stg)
+    ================================================================================
+    
+    PROPÓSITO:
+    Lee un archivo CSV desde la carpeta Sources/, lo carga en una tabla STAGING
+    usando estrategia TRUNCATE + Full Load (garantiza idempotencia).
+    
+    ESTRATEGIA DE CARGA: TRUNCATE + FULL LOAD
+    - Método: Borra todos los datos previos, carga datos frescos
+    - Idempotencia: Ejecutar N veces = mismo resultado (no duplica datos)
+    - Ventaja: Simple, confiable, garantiza consistencia
+    - Desventaja: Perde auditoría de cambios incrementales (por ahora)
+    
+    INPUT (PARÁMETROS):
+    - archivo_csv (str): Nombre del archivo CSV en Sources/
+      Ejemplo: 'estudiante.csv', 'dictado.csv'
+    - nombre_tabla_stg (str): Nombre de tabla STAGING en BD
+      Ejemplo: 'stg_estudiante', 'stg_dictado'
+    
+    OUTPUT (RETORNO):
+    - bool: True si carga exitosa, False si ocurrió error
+    
+    TRATAMIENTO (FLUJO):
+    
+    ┌─── STEP 1: VERIFICACIÓN DE ARCHIVO ─┐
+    │ - Construir ruta completa desde RUTA_SOURCES
+    │ - Verificar que el archivo existe
+    │ - Si no existe → Log error → Return False
+    
+    ┌─── STEP 2: TRUNCATE (LIMPIAR TABLA) ─┐
+    │ - Ejecutar: DELETE FROM tabla  (alterna: TRUNCATE TABLE)
+    │ - Propósito: Eliminar datos antiguos
+    │ - Idempotencia: Si tabla está vacía, no falla
+    │ - Si falla → Log error → Return False
+    
+    ┌─── STEP 3: LEER CSV EN MEMORIA ─┐
+    │ - pd.read_csv() con dtype=str (todo texto)
+    │ - Razón: Staging es "crudo", lo limpiaremos después
+    │ - Si CSV vacío → Log warning → Return True (no hay dato)
+    
+    ┌─── STEP 4: ENRIQUECIMIENTO ESPECIAL ─┐
+    │ - Si es evaluacion_curso → Llamar enriquecer_evaluacion_curso()
+    │ - Otros CSVs → No se enriquecen aquí
+    
+    ┌─── STEP 5: AGREGAR METADATOS ─┐
+    │ - archivo_origen: nombre del CSV (para auditoría)
+    │ - fecha_carga: timestamp actual (cuándo se cargó)
+    │ - Útil para debugging y rastrabilidad
+    
+    ┌─── STEP 6: RENOMBRAR COLUMNAS ─┐
+    │ - Suffix '_raw': agregar '_raw' a nombres de columnas
+    │ - Ejemplo: 'nombre' → 'nombre_raw'
+    │ - Razón: En transformación posterior se limpian (nombre_raw → nombre)
+    
+    ┌─── STEP 7: INSERTAR EN BD ─┐
+    │ - df.to_sql() con if_exists='append'
+    │ - Inserta en tabla STG (ya truncada)
+    │ - Si falla → Log error → Exception (no maneja)
+    
+    ┌─── STEP 8: REGISTRO DE ÉXITO ─┐
+    │ - Log info: "Cargados X registros en tabla Y"
+    │ - Return True
+    
+    ERRORES MANEJADOS:
+    - Archivo no encontrado → False
+    - TRUNCATE falló → False
+    - Inserción falló → Exception (no recuperable)
+    
+    EJEMPLO DE USO:
+    
+    # Caso exitoso
+    resultado = cargar_csv_a_staging('estudiante.csv', 'stg_estudiante')
+    # Output: True, logs: "Cargados 500 registros en stg_estudiante"
+    
+    # Caso fallo - archivo no existe
+    resultado = cargar_csv_a_staging('inexistente.csv', 'stg_tabla')
+    # Output: False, logs: "Archivo no encontrado..."
+    
+    NOTA SOBRE IDEMPOTENCIA:
+    Si ejecutas esta función dos veces:
+    - Primera ejecución: tabla_stg vacía → TRUNCATE (sin efecto) → Inserta datos
+    - Segunda ejecución: tabla_stg llena → TRUNCATE (borra todo) → Inserta datos
+    - Resultado: Tabla idéntica (sin duplicados, datos frescos)
+    
+    ================================================================================
     """
     try:
         ruta_completa = os.path.join(RUTA_SOURCES, archivo_csv)

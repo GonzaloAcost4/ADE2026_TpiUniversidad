@@ -1,6 +1,6 @@
-DB_USER = "example_user"
-DB_PASSWORD = "example_root"  # El que configuraste al instalar MySQL
-DB_HOST = "localhost" 
-DB_PORT = "3306"
-STG_DATABASE = "stg_universidad"
-DWH_DATABASE = "dw_universidad"
+DB_USER=root
+DB_PASSWORD=root
+DB_HOST=mysql_db
+DB_PORT=3306
+STG_DATABASE=stg_universidad
+DWH_DATABASE=dw_universidad

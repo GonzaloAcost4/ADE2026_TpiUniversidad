@@ -1,5 +1,5 @@
-CREATE DATABASE IF NOT EXISTS STG_Universidad;
-USE STG_Universidad;
+CREATE DATABASE IF NOT EXISTS stg_universidad;
+USE stg_universidad;
 
 -- Tabla 1: STG_ESTUDIANTE
 CREATE TABLE stg_estudiante (

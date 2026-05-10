@@ -1,27 +1,54 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-"""
-ETL Transformación - De STG_Universidad a dw_universidad
-
-Este script transforma los datos crudos de staging hacia el modelo dimensional
-real del Data Warehouse definido en CreacionDWH_Universidad.sql:
-
-Dimensiones:
-- Tiempo
-- Alumno
-- Dictado
-
-Hechos:
-- Inscripcion
-- ExamenAlumno
-- EvaluacionDictado
-
-La transformación NO carga tablas operacionales intermedias como Facultad,
-Departamento, Programa, Curso, Docente o Estudiante, porque esas tablas no
-existen en el esquema dimensional del DWH. Sus datos se integran/denormalizan
-dentro de las dimensiones Alumno y Dictado.
-"""
+################################################################################
+# SCRIPT: transformacion.py
+################################################################################
+# PROPÓSITO GENERAL:
+# Script ETL que transforma datos CRUDOS de STAGING (STG_Universidad)
+# hacia un modelo DIMENSIONAL del Data Warehouse (dw_universidad).
+#
+# ARQUITECTURA:
+#
+#  STG_Universidad (STAGING)               dw_universidad (DWH - DIMENSIONAL)
+#  ════════════════════════════════════    ════════════════════════════════════
+#  stg_estudiante                          DIMENSIONES:
+#  stg_docente                             ├─ Tiempo (fechas con calendarios)
+#  stg_dictado                             ├─ Alumno (con programa integrado)
+#  stg_inscripcion        ──TRANSFORMA──→  └─ Dictado (con docente+curso+depto)
+#  stg_examen                              
+#  stg_evaluacion_curso                    HECHOS (medibles):
+#  stg_facultad                            ├─ Inscripcion (alumno×dictado)
+#  stg_departamento                        ├─ ExamenAlumno (notas por intento)
+#  stg_programa                            └─ EvaluacionDictado (puntajes)
+#  stg_curso
+#  stg_curso_programa
+#
+# FLUJO DE TRANSFORMACIÓN:
+# 1. Lectura: Leer datos CRUDOS desde tablas STG_*
+# 2. Limpieza: Validar tipos, formatos, rangos
+# 3. Normalización: Mapeos de valores, denormalización
+# 4. Construcción: Armar dimensiones (con SKeys) y hechos
+# 5. Truncate: Vaciar tablas DWH (idempotencia)
+# 6. Carga: Insertar dimensiones → luego hechos (respetando FK)
+# 7. Reporting: Estadísticas finales
+#
+# ESTRATEGIA DE CARGA:
+# - TRUNCATE + Full Load: Garantiza idempotencia (ejecutar N veces = resultado igual)
+# - SCD Tipo 1 (Dimensiones): Sobrescribe valores cuando cambian
+# - Surrogate Keys: Claves técnicas (SK) para BD, claves naturales (ID) para lógica
+#
+# MANEJO DE DATOS DENORMALIZADOS:
+# - Estudiante + Programa → DIMENSIÓN Alumno (integra ambos)
+# - Dictado + Curso + Docente + Depto + Facultad → DIMENSIÓN Dictado
+# - Razón: DWH no tiene tablas operacionales (Faculty, Department, etc)
+#   Solo tiene dimensiones denormalizadas + hechos
+#
+# OUTPUT:
+# - Logs: 2-ETL_CargaInicial/logs/transformacion_YYYYMMDD_HHMMSS.log
+# - BD: Tablas DWH pobladas (Tiempo, Alumno, Dictado, Inscripcion, etc)
+#
+################################################################################
 
 import logging
 import os
@@ -38,34 +65,41 @@ from sqlalchemy.pool import NullPool
 
 warnings.filterwarnings("ignore")
 
-# ============================================
-# RUTAS E IMPORTS DEL PROYECTO
-# ============================================
+################################################################################
+# CONFIGURACIÓN: RUTAS, IMPORTS DEL PROYECTO
+################################################################################
 
+# Determinar directorio del script
 try:
     SCRIPT_DIR = Path(__file__).resolve().parent
 except NameError:
+    # Si se ejecuta desde notebook o REPL
     SCRIPT_DIR = Path.cwd().resolve()
 
+# Directorio del proyecto TP2
 PROJECT_TP2_DIR = SCRIPT_DIR.parent
 if str(PROJECT_TP2_DIR) not in sys.path:
     sys.path.append(str(PROJECT_TP2_DIR))
 
+# Importar LoggerManager centralizado
 from logging_config import LoggerManager
 
-# ============================================
-# CONFIGURACIÓN DE CREDENCIALES Y CONEXIÓN
-# ============================================
+################################################################################
+# CONFIGURACIÓN: CREDENCIALES Y CONEXIONES
+################################################################################
 
+# Cargar variables de entorno
 load_dotenv()
 
+# Obtener credenciales
 USER = os.getenv("DB_USER")
 PASSWORD = os.getenv("DB_PASSWORD")
 HOST = os.getenv("DB_HOST")
 PORT = os.getenv("DB_PORT")
-STG_DATABASE = os.getenv("STG_DATABASE")
-DWH_DATABASE = os.getenv("DWH_DATABASE")
+STG_DATABASE = os.getenv("STG_DATABASE")      # Base STAGING (lectura)
+DWH_DATABASE = os.getenv("DWH_DATABASE")      # Base DWH (escritura)
 
+# Validar que todas las variables estén presentes
 VARIABLES_REQUERIDAS = {
     "DB_USER": USER,
     "DB_PASSWORD": PASSWORD,
@@ -82,16 +116,19 @@ if faltantes:
         + ", ".join(faltantes)
     )
 
+# Motor #1: Lectura desde STAGING (datos crudos)
 engine_stg = create_engine(
     f"mysql+pymysql://{USER}:{PASSWORD}@{HOST}:{PORT}/{STG_DATABASE}",
     poolclass=NullPool,
 )
 
+# Motor #2: Escritura en DWH (datos transformados)
 engine_dwh = create_engine(
     f"mysql+pymysql://{USER}:{PASSWORD}@{HOST}:{PORT}/{DWH_DATABASE}",
     poolclass=NullPool,
 )
 
+# Configurar logging
 logger = LoggerManager.configurar(
     "transformacion",
     ruta_raiz=str(SCRIPT_DIR),
@@ -357,6 +394,40 @@ class DataCleaner:
 def estadisticas(
     total: int, validos: int, duplicados: int = 0, motivo: Optional[str] = None
 ) -> Dict[str, object]:
+    """
+    ════════════════════════════════════════════════════════════════════════════
+    FUNCIÓN: estadisticas(total, validos, duplicados, motivo)
+    ════════════════════════════════════════════════════════════════════════════
+    
+    INPUT:
+    - total: cantidad total de registros procesados
+    - validos: cantidad de registros que pasaron validación
+    - duplicados: cantidad de registros eliminados por duplicación
+    - motivo: descripción opcional del proceso (p.ej., "por DNI")
+    
+    OUTPUT:
+    Dict con estructura de estadísticas:
+    {
+        'total': N total,
+        'válidos': N válidos,
+        'rechazados': N que fallaron validación,
+        'duplicados': N que eran copias,
+        'motivo': descripción (opcional)
+    }
+    
+    CÁLCULO DE RECHAZADOS:
+    rechazados = total - válidos - duplicados
+    (ej: 100 total, 80 válidos, 10 duplicados → 10 rechazados)
+    
+    REUTILIZACIÓN:
+    Utilizada por todas las funciones transformar_*_base()
+    para retornar estadísticas consistentes.
+    
+    EJEMPLO:
+    >>> stats = estadisticas(total=100, validos=85, duplicados=5)
+    >>> stats['rechazados']
+    10
+    """
     total_int = int(total)
     validos_int = int(validos)
     duplicados_int = int(duplicados)
@@ -374,16 +445,79 @@ def estadisticas(
 
 
 def leer_tabla_staging(nombre_tabla: str) -> pd.DataFrame:
+    """
+    ════════════════════════════════════════════════════════════════════════════
+    FUNCIÓN: leer_tabla_staging(nombre_tabla)
+    ════════════════════════════════════════════════════════════════════════════
+    
+    INPUT: nombre_tabla (str) - Nombre de tabla STG_* a leer
+    OUTPUT: DataFrame con todos los registros de la tabla
+    
+    TRATAMIENTO:
+    1. Conectar a BD STAGING (engine_stg)
+    2. Ejecutar SELECT * FROM tabla
+    3. Registrar en logs
+    4. Retornar DataFrame
+    
+    EJEMPLO:
+    >>> df = leer_tabla_staging('stg_estudiante')
+    >>> len(df)
+    1250  # 1250 estudiantes leídos
+    """
     LoggerManager.info(f"Leyendo staging: {nombre_tabla}")
     return pd.read_sql(f"SELECT * FROM {nombre_tabla}", con=engine_stg)
 
 
 def contar_tabla_dwh(nombre_tabla: str) -> int:
+    """
+    ════════════════════════════════════════════════════════════════════════════
+    FUNCIÓN: contar_tabla_dwh(nombre_tabla)
+    ════════════════════════════════════════════════════════════════════════════
+    
+    INPUT: nombre_tabla (str) - Nombre de tabla en DWH
+    OUTPUT: int - Cantidad de registros en esa tabla
+    
+    PROPÓSITO:
+    Verificar integridad después de carga:
+    ¿Cuántos registros se cargaron exitosamente?
+    
+    EJEMPLO:
+    >>> count = contar_tabla_dwh('Alumno')
+    >>> print(f"Tabla Alumno tiene {count} registros")
+    Tabla Alumno tiene 1200 registros
+    """
     with engine_dwh.connect() as conn:
         return int(conn.execute(text(f"SELECT COUNT(*) FROM {nombre_tabla}")).scalar())
 
 
 def fecha_desde_anio(anio) -> Optional[date]:
+    """
+    ════════════════════════════════════════════════════════════════════════════
+    FUNCIÓN: fecha_desde_anio(anio)
+    ════════════════════════════════════════════════════════════════════════════
+    
+    INPUT: anio - Año (entero, string, None, etc)
+    OUTPUT: date|None - 1 de enero de ese año, o None si inválido
+    
+    LÓGICA DE VALIDACIÓN:
+    1. Limpiar: convertir a entero
+    2. Validar rango: 1900 a (año actual + 10)
+    3. Si OK: retornar date(año, 1, 1)
+    4. Si falla: registrar warning y retornar None
+    
+    RANGO ACEPTABLE:
+    - Mínimo: 1900 (registros históricos)
+    - Máximo: año actual + 10 (para ingreso futuro)
+    - Fuera: marcar como inválido
+    
+    EJEMPLO:
+    >>> fecha_desde_anio(2023)
+    datetime.date(2023, 1, 1)
+    >>> fecha_desde_anio("1999")
+    datetime.date(1999, 1, 1)
+    >>> fecha_desde_anio(1800)  # Muy viejo
+    None  # + warning en logs
+    """
     anio_limpio = DataCleaner.limpiar_numero(anio, "int")
     if anio_limpio is None:
         return None
@@ -396,6 +530,35 @@ def fecha_desde_anio(anio) -> Optional[date]:
 def calcular_edad(
     fecha_nacimiento: Optional[date], fecha_ingreso: Optional[date]
 ) -> Optional[int]:
+    """
+    ════════════════════════════════════════════════════════════════════════════
+    FUNCIÓN: calcular_edad(fecha_nacimiento, fecha_ingreso)
+    ════════════════════════════════════════════════════════════════════════════
+    
+    INPUT:
+    - fecha_nacimiento: date de nacimiento
+    - fecha_ingreso: date de ingreso a la carrera
+    
+    OUTPUT: int|None - Edad en años al ingresar (o None si inválida)
+    
+    CÁLCULO:
+    1. Diferencia de años: ingreso.año - nacimiento.año
+    2. Ajustar si aún no pasó cumpleaños en año actual
+    3. Validar rango: 0 a 120 años
+    4. Si fuera de rango: retornar None
+    
+    VALIDACIÓN DE RANGO:
+    - Edad < 0: imposible (error de datos)
+    - Edad > 120: probablemente error (asumimos estudiante < 120)
+    - Edad típica: 18-65 años
+    
+    EJEMPLO:
+    >>> calcular_edad(
+    ...     fecha_nacimiento=date(2000, 5, 15),
+    ...     fecha_ingreso=date(2020, 3, 1)
+    ... )
+    19  # 19 años en el ingreso
+    """
     if not fecha_nacimiento or not fecha_ingreso:
         return None
     edad = fecha_ingreso.year - fecha_nacimiento.year
@@ -408,6 +571,34 @@ def calcular_edad(
 
 
 def tiempo_skey(fecha: Optional[date]) -> Optional[int]:
+    """
+    ════════════════════════════════════════════════════════════════════════════
+    FUNCIÓN: tiempo_skey(fecha)
+    ════════════════════════════════════════════════════════════════════════════
+    
+    INPUT: fecha - Objeto date o None
+    OUTPUT: int|None - Surrogate Key (clave técnica) para la fecha
+    
+    CONVERSIÓN:
+    Convierte date a integer en formato YYYYMMDD (SCD)
+    Ejemplo:
+    - 2023-05-15 → 20230515
+    - 1999-01-01 → 19990101
+    
+    VENTAJA:
+    - Integer es más rápido para índices/joins que date
+    - Ordena naturalmente (20230101 < 20230601)
+    - Fácil para búsquedas por rango
+    
+    FÓRMULA:
+    SK = (año × 10000) + (mes × 100) + día
+    
+    EJEMPLO:
+    >>> tiempo_skey(date(2023, 5, 15))
+    20230515
+    >>> tiempo_skey(None)
+    None
+    """
     if not fecha:
         return None
     return fecha.year * 10000 + fecha.month * 100 + fecha.day
@@ -432,12 +623,17 @@ def registrar_rechazos(nombre: str, total: int, validos: int) -> None:
         LoggerManager.warning(f"{nombre}: {rechazados} registros rechazados")
 
 
-# ============================================
+################################################################################
 # TRANSFORMACIONES BASE DESDE STAGING
-# ============================================
-
-
-def transformar_estudiante_base(df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict]:
+################################################################################
+# 
+# PATRÓN COMÚN: Todas las funciones transformar_*_base() siguen este patrón:
+#
+# 1. ENTRADA: DataFrame crudo con columnas sufijadas _raw (de STG)
+# 2. LIMPIEZA: Usar DataCleaner para limpiar cada columna
+# 3. VALIDACIÓN: Crear booleano 'valido' verificando campos requeridos
+# 4. SEPARACIÓN: Dividir en válidos (pasan) e inválidos (rechazan)
+# 5. DEDUPLICACIÓN: Eliminar duplicados por claves naturales (id_principal, DNI, etc)\n# 6. SALIDA: (DataFrame limpio, Dict con estadísticas)\n#\n# ESTADÍSTICAS RETORNADAS:\n# {\n#     'total': N registros entrada,\n#     'válidos': N que pasaron validación,\n#     'rechazados': N que fallaron,\n#     'duplicados': N eliminados por duplicación\n# }\n#\n# REUTILIZACIÓN:\n# Estas funciones se usan en AMBOS procesos:\n# - Carga Inicial: transformacion.ipynb\n# - Carga Incremental: carga_incremental.py (importa como base_etl.transformar_*)\n#\n################################################################################\n\ndef transformar_estudiante_base(df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict]:\n    \"\"\"\n    ════════════════════════════════════════════════════════════════════════════\n    FUNCIÓN: transformar_estudiante_base(df)\n    ════════════════════════════════════════════════════════════════════════════\n    \n    INPUT: DataFrame de stg_estudiante (columnas suffixadas _raw)\n    OUTPUT: (DataFrame limpio de estudiantes, estadísticas de transformación)\n    \n    LIMPIEZA POR COLUMNA:\n    1. id_estudiante: entero positivo (clave primaria en STG)\n    2. dni: entero, validar rango argentino 7-8 dígitos\n    3. apellido, nombre: strings limpios (sin espacios/encoding)\n    4. género: normalizar a M/F/X\n    5. fecha_nacimiento: parsear múltiples formatos\n    6. nacionalidad: string limpio\n    7. id_programa: entero (FK a Programa)\n    8. año_ingreso: convertir a date(año, 1, 1)\n    \n    VALIDACIÓN DE FILA:\n    Una fila es VÁLIDA si:\n    - id_estudiante NOT NULL\n    - DNI válido (7-8 dígitos argentinos)\n    - apellido NOT NULL\n    - nombre NOT NULL\n    - id_programa NOT NULL\n    \n    DEDUPLICACIÓN:\n    - Eliminar duplicados por id_estudiante (clave única)\n    - Eliminar duplicados por DNI (identificación única)\n    - Mantener primer registro en caso de duplicado\n    \n    TRATAMIENTO DE ERRORES:\n    - Campos nulos: rechazan la fila\n    - Encoding corrupto (mojibake): intenta reparar\n    - DNI inválido: rechaza fila\n    - Fecha no parseable: pone NULL en fecha_nacimiento\n    \n    EJEMPLO:\n    Input DataFrame:\n    | id_estudiante_raw | dni_raw    | apellido_raw | ... |\n    | '100'             | '35.678.901'| ' Pérez '   | ... |\n    \n    Output DataFrame:\n    | id_estudiante | dni      | apellido | ... |\n    | 100           | 35678901 | Pérez   | ... |\n    \n    Output Estadísticas:\n    {\n        'total': 1500,\n        'válidos': 1350,\n        'rechazados': 100,\n        'duplicados': 50\n    }\n    \"\"\""
     cleaner = DataCleaner()
     total = len(df)
     df = df.copy()

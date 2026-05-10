@@ -1,5 +1,5 @@
 CREATE DATABASE IF NOT EXISTS dw_universidad;
-USE dw_universidad; 
+USE dw_universidad;
 
 -- Tabla Dimensión: Tiempo
 CREATE TABLE Tiempo (
@@ -7,7 +7,7 @@ CREATE TABLE Tiempo (
     fecha DATE NOT NULL,
     dia INT NOT NULL,
     mes VARCHAR(20) NOT NULL,
-    año INT NOT NULL,
+    ano INT NOT NULL,
     periodoAcademico VARCHAR(50),
     esFeriado BOOLEAN DEFAULT FALSE
 ) ENGINE=InnoDB;
@@ -51,16 +51,16 @@ CREATE TABLE Alumno (
     genero VARCHAR(20),
     fechaNacim DATE,
     nacionalidad VARCHAR(50),
-    añoIngreso DATE,
+    anioIngreso DATE,
     edadIngreso INT,
     egresoCarrera BOOLEAN DEFAULT FALSE,
-    añoEgreso DATE,
+    anioEgreso DATE,
     abandonoCarrera BOOLEAN DEFAULT FALSE,
-    añoAbandono DATE,
+    anioAbandono DATE,
     nombrePrograma VARCHAR(100),
     tipoPrograma VARCHAR(50),
-    duracionAñosPrograma INT,
-    añoPlanPrograma DATE,
+    duracionAniosPrograma INT,
+    anioPlanPrograma DATE,
     valid_from DATE NOT NULL,
     valid_to DATE,
     es_actual BOOLEAN DEFAULT TRUE,
