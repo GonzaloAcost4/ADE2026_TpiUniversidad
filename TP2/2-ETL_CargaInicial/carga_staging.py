@@ -3,7 +3,6 @@
 
 # In[1]:
 
-
 import os
 import sys
 from datetime import datetime, timedelta
@@ -50,62 +49,23 @@ def enriquecer_evaluacion_curso(df):
     """
     Completa evaluacion_curso.csv con los datos mínimos que requiere el DWH.
 
-    El CSV original tiene evaluación por dictado, pero EvaluacionDictado necesita
-    estudiante y fecha. Para no inventar claves, se asigna cada evaluación a un
-    estudiante inscripto en el mismo dictado, usando un orden determinístico por
-    id_inscripcion. La fecha se estima con el calendario académico del dictado:
-    C1 -> 15/07 del año académico, C2 -> 15/12 del año académico. Si no se puede
-    calcular, se usa fecha_inscripcion + 90 días.
+    El CSV original tiene evaluación a nivel dictado. Como la granularidad del
+    hecho es dictado + fecha, solo se enriquece `fecha_evaluacion`.
+
+    Regla:
+    - si existe calendario del dictado: C1 -> 15/07 del año académico, C2 -> 15/12
+    - si no, se usa la primera fecha_inscripcion del dictado + 90 días
     """
     if df.empty:
         return df
 
-    columnas_requeridas = {"id_estudiante", "fecha_evaluacion"}
-    if columnas_requeridas.issubset(set(df.columns)):
+    if "fecha_evaluacion" in df.columns:
         return df
 
     ruta_inscripciones = os.path.join(RUTA_SOURCES, "inscripcion.csv")
     ruta_dictados = os.path.join(RUTA_SOURCES, "dictado.csv")
 
-    if not os.path.exists(ruta_inscripciones):
-        LoggerManager.warning(
-            "No se puede enriquecer evaluacion_curso: falta inscripcion.csv"
-        )
-        df["id_estudiante"] = None
-        df["fecha_evaluacion"] = None
-        return df
-
-    inscripciones = pd.read_csv(ruta_inscripciones, sep=",", dtype=str)
-    inscripciones = inscripciones.sort_values(["id_dictado", "id_inscripcion"])
-    inscripciones["orden_eval"] = inscripciones.groupby("id_dictado").cumcount()
-
     evaluaciones = df.copy()
-    evaluaciones = evaluaciones.sort_values(["id_dictado", "id_evaluacion"])
-    evaluaciones["orden_eval"] = evaluaciones.groupby("id_dictado").cumcount()
-
-    inscripciones_por_dictado = (
-        inscripciones.groupby("id_dictado").size().rename("cant_inscriptos")
-    )
-    evaluaciones = evaluaciones.merge(
-        inscripciones_por_dictado, on="id_dictado", how="left"
-    )
-    evaluaciones["orden_match"] = evaluaciones.apply(
-        lambda row: (
-            int(row["orden_eval"]) % int(row["cant_inscriptos"])
-            if pd.notna(row["cant_inscriptos"]) and int(row["cant_inscriptos"]) > 0
-            else None
-        ),
-        axis=1,
-    )
-
-    inscripciones_match = inscripciones.rename(columns={"orden_eval": "orden_match"})[
-        ["id_dictado", "orden_match", "id_estudiante", "fecha_inscripcion"]
-    ]
-    evaluaciones = evaluaciones.merge(
-        inscripciones_match,
-        on=["id_dictado", "orden_match"],
-        how="left",
-    )
 
     fecha_por_dictado = {}
     if os.path.exists(ruta_dictados):
@@ -119,36 +79,42 @@ def enriquecer_evaluacion_curso(df):
                 elif periodo in {"C2", "2", "P2", "SEGUNDO"}:
                     fecha_por_dictado[str(row["id_dictado"])] = f"{anio}-12-15"
 
-    def calcular_fecha_evaluacion(row):
-        fecha_calendario = fecha_por_dictado.get(str(row["id_dictado"]))
-        if fecha_calendario:
-            return fecha_calendario
-        try:
-            return (
-                (pd.to_datetime(row["fecha_inscripcion"]) + timedelta(days=90))
-                .date()
-                .isoformat()
+    fecha_fallback_por_dictado = {}
+    if os.path.exists(ruta_inscripciones):
+        inscripciones = pd.read_csv(ruta_inscripciones, sep=",", dtype=str)
+        if not inscripciones.empty and {"id_dictado", "fecha_inscripcion"}.issubset(
+            inscripciones.columns
+        ):
+            inscripciones["fecha_inscripcion"] = pd.to_datetime(
+                inscripciones["fecha_inscripcion"], errors="coerce"
             )
-        except Exception:
-            return None
+            primeras = (
+                inscripciones.dropna(subset=["fecha_inscripcion"])
+                .groupby("id_dictado", as_index=False)["fecha_inscripcion"]
+                .min()
+            )
+            for _, row in primeras.iterrows():
+                fecha_fallback_por_dictado[str(row["id_dictado"])] = (
+                    (row["fecha_inscripcion"] + timedelta(days=90)).date().isoformat()
+                )
+
+    def calcular_fecha_evaluacion(row):
+        id_dictado = str(row.get("id_dictado", ""))
+        return fecha_por_dictado.get(id_dictado) or fecha_fallback_por_dictado.get(
+            id_dictado
+        )
 
     evaluaciones["fecha_evaluacion"] = evaluaciones.apply(
         calcular_fecha_evaluacion, axis=1
     )
-    evaluaciones = evaluaciones.drop(
-        columns=["orden_eval", "cant_inscriptos", "orden_match", "fecha_inscripcion"],
-        errors="ignore",
-    )
 
-    sin_estudiante = evaluaciones["id_estudiante"].isna().sum()
-    if sin_estudiante > 0:
+    sin_fecha = evaluaciones["fecha_evaluacion"].isna().sum()
+    if sin_fecha > 0:
         LoggerManager.warning(
-            f"Evaluaciones sin estudiante asignable por falta de inscripción: {sin_estudiante}"
+            f"Evaluaciones sin fecha asignable por falta de calendario o inscripciones: {sin_fecha}"
         )
 
-    LoggerManager.info(
-        "evaluacion_curso enriquecido con id_estudiante y fecha_evaluacion"
-    )
+    LoggerManager.info("evaluacion_curso enriquecido con fecha_evaluacion")
     return evaluaciones
 
 

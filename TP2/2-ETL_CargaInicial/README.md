@@ -25,16 +25,15 @@ El script `transformacion.py` carga las tablas reales del DWH:
 
 ## Cambio realizado sobre `stg_evaluacion_curso`
 
-La tabla de hecho `fact_evaluacion_dictado` del DWH requiere:
+La tabla de hecho `fact_evaluacion_dictado` del DWH quedó definida a nivel:
 
 - `dictado_skey`
-- `estudiante_skey`
 - `tiempo_skey`
 - `nota_dictado`
 - `nota_cont`
 - `nota_general`
 
-La fuente original `evaluacion_curso.csv` solo tenía:
+La fuente original `evaluacion_curso.csv` trae:
 
 - `id_evaluacion`
 - `id_dictado`
@@ -42,36 +41,32 @@ La fuente original `evaluacion_curso.csv` solo tenía:
 - `puntaje_contenido`
 - `valoracion_general`
 
-Por eso se agregaron en staging:
+Como el negocio no requiere identificar al estudiante que respondió la evaluación, en staging solo se agrega:
 
-- `id_estudiante_raw`
 - `fecha_evaluacion_raw`
 
-Estos campos permiten resolver `estudiante_skey` y `tiempo_skey`, que son obligatorios en el DWH.
+Ese campo permite resolver `tiempo_skey`, que sí es obligatorio en el DWH para este hecho.
 
-Estos campos ya quedaron incorporados directamente en:
+El cambio quedó incorporado directamente en:
 
 - `TP2/1-ScriptCreacion_DB/CreacionSTG_Universidad.sql`
+- `TP2/1-ScriptCreacion_DB/CreacionDWH_Universidad.sql`
 
-Si la tabla `stg_evaluacion_curso` ya fue creada con la estructura anterior, hay que recrearla o actualizarla antes de volver a ejecutar `carga_staging.py`. En este proyecto se dejó el cambio dentro del script principal de creación para que la estructura correcta nazca desde la creación del staging.
+Si las tablas ya fueron creadas con la estructura anterior, hay que recrearlas antes de volver a ejecutar `carga_staging.py` y `transformacion.py`.
 
 ## Enriquecimiento de `evaluacion_curso.csv`
 
-El CSV original no trae estudiante ni fecha de evaluación. Para poder cargar la tabla de hecho sin inventar surrogate keys, `carga_staging.py` enriquece `evaluacion_curso.csv` antes de insertarlo en staging.
+El CSV original no trae fecha de evaluación. Para poder cargar la tabla de hecho sin inventar una relación con estudiantes, `carga_staging.py` enriquece `evaluacion_curso.csv` solo con `fecha_evaluacion` antes de insertarlo en staging.
 
 La regla aplicada es:
 
-1. Se toma cada evaluación por `id_dictado`.
-2. Se buscan estudiantes inscriptos en ese mismo `id_dictado` usando `inscripcion.csv`.
-3. Se asigna cada evaluación a un estudiante inscripto de manera determinística, ordenando por `id_inscripcion`.
-4. Si hay más evaluaciones que inscripciones para un dictado, se reutiliza el orden de inscriptos de forma cíclica.
-5. La fecha de evaluación se estima con el calendario académico del dictado:
-   - `C1` se carga como `YYYY-07-15`.
-   - `C2` se carga como `YYYY-12-15`.
-6. Si no se puede obtener el calendario del dictado, se usa como alternativa `fecha_inscripcion + 90 días`.
-7. Si no existe inscripción para ese dictado, la evaluación queda sin estudiante y luego se rechaza en transformación.
+1. Se intenta estimar la fecha con el calendario académico del dictado.
+2. Si el período es `C1`, se usa `YYYY-07-15`.
+3. Si el período es `C2`, se usa `YYYY-12-15`.
+4. Si no se puede obtener el calendario del dictado, se usa como alternativa la primera `fecha_inscripcion` del dictado + 90 días.
+5. Si no existe ni calendario ni inscripciones para ese dictado, la evaluación queda sin fecha y luego se rechaza en transformación.
 
-Esta regla deja explícita la decisión tomada y evita cargar claves inexistentes o valores falsos en el DWH.
+Esta regla mantiene la granularidad real del dato: evaluación de dictado por fecha, no por estudiante.
 
 ## Limpieza general de datos
 
@@ -270,7 +265,6 @@ Válido si tiene:
 
 - `id_evaluacion` no nulo
 - `id_dictado` no nulo
-- `id_estudiante` no nulo
 - `fecha_evaluacion` válida
 - `puntaje_dictado` entre 0 y 10
 - `puntaje_contenido` entre 0 y 10
@@ -278,7 +272,7 @@ Válido si tiene:
 
 Se eliminan duplicados por `id_evaluacion`, conservando el primero.
 
-Si `id_estudiante_raw` o `fecha_evaluacion_raw` no existen en staging, los registros quedan inválidos para `EvaluacionDictado`, porque no se pueden resolver `alumnoSKey` ni `tiempoSKey`.
+Si `fecha_evaluacion_raw` no existe en staging, los registros quedan inválidos para `EvaluacionDictado`, porque no se puede resolver `tiempoSKey`.
 
 ## Construcción de dimensiones
 
@@ -388,18 +382,16 @@ Se construye desde `stg_evaluacion_curso` enriquecida.
 Transformaciones clave:
 
 - `id_dictado` se convierte a `dictadoSKey`.
-- `id_estudiante` se convierte a `alumnoSKey`.
 - `fecha_evaluacion` se convierte a `tiempoSKey`.
 - `puntaje_dictado` se carga como `notaDictado`.
 - `puntaje_contenido` se carga como `notaCont`.
 - `valoracion_general` se carga como `notaGeneral`.
 
-Solo se carga si las tres surrogate keys existen.
+Solo se carga si ambas surrogate keys existen.
 
 Duplicados eliminados por:
 
 - `dictadoSKey`
-- `alumnoSKey`
 - `tiempoSKey`
 
 Se conserva el último registro, ordenado por fecha e `id_evaluacion`.
@@ -426,8 +418,8 @@ Un registro puede no llegar al DWH por tres motivos principales:
 
 ## Orden de ejecución recomendado
 
-1. Crear o recrear staging con `CreacionSTG_Universidad.sql` para asegurar que `stg_evaluacion_curso` tenga `id_estudiante_raw` y `fecha_evaluacion_raw`.
-2. Crear el DWH con `CreacionDWH_Universidad.sql`.
+1. Crear o recrear staging con `CreacionSTG_Universidad.sql` para asegurar que `stg_evaluacion_curso` tenga `fecha_evaluacion_raw`.
+2. Crear o recrear el DWH con `CreacionDWH_Universidad.sql`.
 3. Ejecutar `carga_staging.py`.
 4. Ejecutar `transformacion.py`.
 

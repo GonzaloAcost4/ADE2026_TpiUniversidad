@@ -1,4 +1,4 @@
-version: '3.9'
+version: "3.9"
 
 services:
   mysql:
@@ -8,15 +8,14 @@ services:
 
     environment:
       MYSQL_ROOT_PASSWORD: root123
-      MYSQL_DATABASE: app_db
-      MYSQL_USER: app_user
-      MYSQL_PASSWORD: app_pass
 
     ports:
       - "3306:3306"
 
     volumes:
       - mysql_data:/var/lib/mysql
+      - ./TP2/1-ScriptCreacion_DB/CreacionSTG_Universidad.sql:/docker-entrypoint-initdb.d/01-CreacionSTG_Universidad.sql:ro
+      - ./TP2/1-ScriptCreacion_DB/CreacionDWH_Universidad.sql:/docker-entrypoint-initdb.d/02-CreacionDWH_Universidad.sql:ro
 
 volumes:
   mysql_data:

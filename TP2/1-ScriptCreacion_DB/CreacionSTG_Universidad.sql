@@ -152,12 +152,19 @@ CREATE TABLE stg_evaluacion_curso (
     fecha_carga DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     id_evaluacion_raw VARCHAR(50) NULL,
     id_dictado_raw VARCHAR(50) NULL,
-    id_estudiante_raw VARCHAR(50) NULL,
     fecha_evaluacion_raw VARCHAR(80) NULL,
     puntaje_dictado_raw VARCHAR(50) NULL,
     puntaje_contenido_raw VARCHAR(50) NULL,
     valoracion_general_raw VARCHAR(50) NULL,
     INDEX IX_stg_eval_id (id_evaluacion_raw),
-    INDEX IX_stg_eval_dictado (id_dictado_raw),
-    INDEX IX_stg_eval_estudiante (id_estudiante_raw)
+    INDEX IX_stg_eval_dictado (id_dictado_raw)
+) ENGINE=InnoDB;
+
+
+CREATE TABLE stg_reg_repetidos (
+    row_id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    archivo_origen VARCHAR(255) NULL,
+    fecha_carga DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    id_repetido VARCHAR(50) NULL,
+    id_tomado VARCHAR(50) NULL
 ) ENGINE=InnoDB;

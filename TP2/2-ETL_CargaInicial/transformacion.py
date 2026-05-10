@@ -430,6 +430,108 @@ def registrar_rechazos(nombre: str, total: int, validos: int) -> None:
         LoggerManager.warning(f"{nombre}: {rechazados} registros rechazados")
 
 
+def construir_mapeo_estudiantes_duplicados(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Detecta estudiantes duplicados por DNI y conserva como canónico el primer
+    registro cargado en staging. Devuelve una fila por cada id descartado.
+    """
+    if df.empty or "dni" not in df.columns:
+        return pd.DataFrame(columns=["archivo_origen", "id_repetido", "id_tomado"])
+
+    trabajo = df.copy()
+    columnas_orden = [
+        col for col in ["dni", "row_id", "id_estudiante"] if col in trabajo.columns
+    ]
+    if columnas_orden:
+        trabajo = trabajo.sort_values(columnas_orden, kind="stable")
+
+    trabajo["id_tomado"] = trabajo.groupby("dni")["id_estudiante"].transform("first")
+    duplicados = trabajo[
+        trabajo["dni"].notna() & (trabajo["id_estudiante"] != trabajo["id_tomado"])
+    ].copy()
+
+    if duplicados.empty:
+        return pd.DataFrame(columns=["archivo_origen", "id_repetido", "id_tomado"])
+
+    return duplicados[["archivo_origen", "id_estudiante", "id_tomado"]].rename(
+        columns={"id_estudiante": "id_repetido"}
+    )
+
+
+def persistir_registros_duplicados(duplicados: pd.DataFrame) -> Dict[str, int]:
+    """Refresca la tabla staging que deja trazabilidad de ids descartados."""
+    columnas = ["archivo_origen", "id_repetido", "id_tomado"]
+    carga = (
+        duplicados.copy() if duplicados is not None else pd.DataFrame(columns=columnas)
+    )
+
+    for columna in columnas:
+        if columna not in carga.columns:
+            carga[columna] = None
+
+    with engine_stg.begin() as conn:
+        conn.execute(text("TRUNCATE TABLE stg_reg_repetidos"))
+
+    if carga.empty:
+        LoggerManager.info(
+            "stg_reg_repetidos vaciada sin registros duplicados para insertar"
+        )
+        return {"registrados": 0}
+
+    carga[columnas].to_sql(
+        name="stg_reg_repetidos",
+        con=engine_stg,
+        if_exists="append",
+        index=False,
+        method="multi",
+    )
+    LoggerManager.info(
+        f"stg_reg_repetidos actualizada con {len(carga)} ids_estudiante_raw duplicados"
+    )
+    return {"registrados": int(len(carga))}
+
+
+def obtener_mapa_ids_estudiante_duplicados() -> Dict[int, int]:
+    """Lee desde staging los ids descartados y sus ids canónicos."""
+    try:
+        df = pd.read_sql(
+            "SELECT id_repetido, id_tomado FROM stg_reg_repetidos "
+            "WHERE id_repetido IS NOT NULL AND id_tomado IS NOT NULL",
+            con=engine_stg,
+        )
+    except Exception as exc:
+        LoggerManager.warning(
+            f"No se pudo leer stg_reg_repetidos para remapeo de estudiantes: {exc}"
+        )
+        return {}
+
+    if df.empty:
+        return {}
+
+    df["id_repetido"] = df["id_repetido"].apply(
+        lambda x: DataCleaner.limpiar_numero(x, "int")
+    )
+    df["id_tomado"] = df["id_tomado"].apply(
+        lambda x: DataCleaner.limpiar_numero(x, "int")
+    )
+    df = df.dropna(subset=["id_repetido", "id_tomado"])
+    return dict(zip(df["id_repetido"], df["id_tomado"]))
+
+
+def remapear_ids_estudiante(
+    df: pd.DataFrame, mapa_ids: Dict[int, int], columna_objetivo: str = "id_estudiante"
+) -> Tuple[pd.DataFrame, int]:
+    """Reemplaza ids de estudiante duplicados por el id canónico elegido."""
+    if df.empty or not mapa_ids or columna_objetivo not in df.columns:
+        return df.copy(), 0
+
+    resultado = df.copy()
+    afectados = int(resultado[columna_objetivo].isin(mapa_ids.keys()).sum())
+    if afectados > 0:
+        resultado[columna_objetivo] = resultado[columna_objetivo].replace(mapa_ids)
+    return resultado, afectados
+
+
 # ============================================
 # TRANSFORMACIONES BASE DESDE STAGING
 # ============================================
@@ -439,6 +541,9 @@ def transformar_estudiante_base(df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict]:
     cleaner = DataCleaner()
     total = len(df)
     df = df.copy()
+
+    if "row_id" in df.columns:
+        df = df.sort_values(["row_id"], kind="stable")
 
     df["id_estudiante"] = df["id_estudiante_raw"].apply(
         lambda x: cleaner.limpiar_numero(x, "int")
@@ -468,6 +573,14 @@ def transformar_estudiante_base(df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict]:
     validos = df[valido].copy()
     registrar_rechazos("stg_estudiante", total, len(validos))
     validos, duplicados = quitar_duplicados(validos, ["id_estudiante"], keep="first")
+
+    registros_duplicados = construir_mapeo_estudiantes_duplicados(validos)
+    mapa_ids_duplicados = dict(
+        zip(registros_duplicados["id_repetido"], registros_duplicados["id_tomado"])
+    )
+    if mapa_ids_duplicados:
+        validos["id_estudiante"] = validos["id_estudiante"].replace(mapa_ids_duplicados)
+
     validos, duplicados_dni = quitar_duplicados(validos, ["dni"], keep="first")
     duplicados += duplicados_dni
 
@@ -482,7 +595,11 @@ def transformar_estudiante_base(df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict]:
         "id_programa",
         "fecha_ingreso",
     ]
-    return validos[columnas], estadisticas(total, len(validos), duplicados)
+    resultado = validos[columnas].copy()
+    resultado.attrs["registros_estudiante_duplicados"] = registros_duplicados.copy()
+    resultado.attrs["mapa_ids_estudiante_duplicados"] = mapa_ids_duplicados
+
+    return resultado, estadisticas(total, len(validos), duplicados)
 
 
 def transformar_programa_base(df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict]:
@@ -669,6 +786,9 @@ def transformar_dictado_base(df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict]:
     df["id_programa"] = df["id_programa_raw"].apply(
         lambda x: cleaner.limpiar_numero(x, "int")
     )
+    df["anio_academico"] = df["anio_academico_raw"].apply(
+        lambda x: cleaner.limpiar_numero(x, "int")
+    )
     df["periodo"] = df["periodo_raw"].apply(cleaner.normalizar_periodo)
     df["turno"] = df["turno_raw"].apply(cleaner.limpiar_string)
     df["aula"] = df["aula_raw"].apply(cleaner.limpiar_string)
@@ -690,6 +810,7 @@ def transformar_dictado_base(df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict]:
         "id_curso",
         "id_docente",
         "id_programa",
+        "anio_academico",
         "periodo",
         "turno",
         "aula",
@@ -786,20 +907,16 @@ def transformar_evaluacion_base(df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict]:
     total = len(df)
     df = df.copy()
 
-    for columna_raw in ["id_estudiante_raw", "fecha_evaluacion_raw"]:
-        if columna_raw not in df.columns:
-            df[columna_raw] = None
-            LoggerManager.warning(
-                f"stg_evaluacion_curso no contiene {columna_raw}; los registros quedarán inválidos para EvaluacionDictado"
-            )
+    if "fecha_evaluacion_raw" not in df.columns:
+        df["fecha_evaluacion_raw"] = None
+        LoggerManager.warning(
+            "stg_evaluacion_curso no contiene fecha_evaluacion_raw; los registros quedarán inválidos para EvaluacionDictado"
+        )
 
     df["id_evaluacion"] = df["id_evaluacion_raw"].apply(
         lambda x: cleaner.limpiar_numero(x, "int")
     )
     df["id_dictado"] = df["id_dictado_raw"].apply(
-        lambda x: cleaner.limpiar_numero(x, "int")
-    )
-    df["id_estudiante"] = df["id_estudiante_raw"].apply(
         lambda x: cleaner.limpiar_numero(x, "int")
     )
     df["fecha_evaluacion"] = df["fecha_evaluacion_raw"].apply(cleaner.limpiar_fecha)
@@ -822,7 +939,6 @@ def transformar_evaluacion_base(df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict]:
     valido = (
         df["id_evaluacion"].notna()
         & df["id_dictado"].notna()
-        & df["id_estudiante"].notna()
         & df["fecha_evaluacion"].notna()
         & puntajes_validos
     )
@@ -833,7 +949,6 @@ def transformar_evaluacion_base(df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict]:
     columnas = [
         "id_evaluacion",
         "id_dictado",
-        "id_estudiante",
         "fecha_evaluacion",
         "puntaje_dictado",
         "puntaje_contenido",
@@ -1010,12 +1125,33 @@ def obtener_mapa_tiempo() -> Dict[date, int]:
 
 def construir_fact_inscripcion(
     inscripciones: pd.DataFrame,
+    dictados: pd.DataFrame,
     mapa_estudiante: Dict[int, int],
     mapa_dictado: Dict[int, int],
     mapa_tiempo: Dict[date, int],
 ) -> Tuple[pd.DataFrame, Dict]:
     total = len(inscripciones)
     df = inscripciones.copy()
+
+    columnas_dictado = [
+        columna
+        for columna in ["id_dictado", "id_curso", "anio_academico"]
+        if columna in dictados.columns
+    ]
+    if set(["id_dictado", "id_curso", "anio_academico"]).issubset(dictados.columns):
+        df = df.merge(
+            dictados[columnas_dictado].drop_duplicates(subset=["id_dictado"]),
+            on="id_dictado",
+            how="left",
+        )
+    else:
+        df["id_curso"] = None
+        df["anio_academico"] = df["fecha_inscripcion"].apply(
+            lambda fecha: fecha.year if pd.notna(fecha) else None
+        )
+        LoggerManager.warning(
+            "dictados sin id_curso/anio_academico completos; fact_inscripcion deduplicará por dictado en lugar de curso+año"
+        )
 
     df["estudiante_skey"] = df["id_estudiante"].map(mapa_estudiante)
     df["dictado_skey"] = df["id_dictado"].map(mapa_dictado)
@@ -1037,12 +1173,27 @@ def construir_fact_inscripcion(
         "Fact Inscripcion por claves no encontradas", total, len(validos)
     )
 
+    validos = validos.sort_values(["fecha_inscripcion", "id_inscripcion"])
+    if validos["id_curso"].notna().all() and validos["anio_academico"].notna().all():
+        subset_duplicado = ["estudiante_skey", "id_curso", "anio_academico"]
+    else:
+        subset_duplicado = ["estudiante_skey", "dictado_skey"]
+
     resultado = validos[
-        ["estudiante_skey", "tiempo_skey", "dictado_skey", "estado", "abandono"]
+        [
+            "estudiante_skey",
+            "tiempo_skey",
+            "dictado_skey",
+            "estado",
+            "abandono",
+            "id_curso",
+            "anio_academico",
+        ]
     ].copy()
-    resultado, duplicados = quitar_duplicados(
-        resultado, ["estudiante_skey", "dictado_skey"], keep="last"
-    )
+    resultado, duplicados = quitar_duplicados(resultado, subset_duplicado, keep="last")
+    resultado = resultado[
+        ["estudiante_skey", "tiempo_skey", "dictado_skey", "estado", "abandono"]
+    ]
 
     return resultado, estadisticas(total, len(resultado), duplicados)
 
@@ -1099,7 +1250,6 @@ def construir_fact_examen_estudiante(
 def construir_fact_evaluacion_dictado(
     evaluaciones: pd.DataFrame,
     mapa_dictado: Dict[int, int],
-    mapa_estudiante: Dict[int, int],
     mapa_tiempo: Dict[date, int],
 ) -> Tuple[pd.DataFrame, Dict]:
     """
@@ -1110,14 +1260,9 @@ def construir_fact_evaluacion_dictado(
     df = evaluaciones.copy()
 
     df["dictado_skey"] = df["id_dictado"].map(mapa_dictado)
-    df["estudiante_skey"] = df["id_estudiante"].map(mapa_estudiante)
     df["tiempo_skey"] = df["fecha_evaluacion"].map(mapa_tiempo)
 
-    valido = (
-        df["dictado_skey"].notna()
-        & df["estudiante_skey"].notna()
-        & df["tiempo_skey"].notna()
-    )
+    valido = df["dictado_skey"].notna() & df["tiempo_skey"].notna()
     validos = df[valido].copy()
     registrar_rechazos(
         "Fact EvaluacionDictado por claves no encontradas", total, len(validos)
@@ -1127,7 +1272,6 @@ def construir_fact_evaluacion_dictado(
     resultado = validos[
         [
             "dictado_skey",
-            "estudiante_skey",
             "tiempo_skey",
             "puntaje_dictado",
             "puntaje_contenido",
@@ -1142,7 +1286,7 @@ def construir_fact_evaluacion_dictado(
         }
     )
     resultado, duplicados = quitar_duplicados(
-        resultado, ["dictado_skey", "estudiante_skey", "tiempo_skey"], keep="last"
+        resultado, ["dictado_skey", "tiempo_skey"], keep="last"
     )
 
     return resultado, estadisticas(total, len(resultado), duplicados)
@@ -1294,8 +1438,31 @@ def ejecutar_transformacion() -> Dict:
 
     reporte["staging_limpieza"] = stats_base
 
-    # 2. Construcción dimensional.
-    print("[2/5] Construcción de dimensiones...", flush=True)
+    registros_duplicados_estudiante = datos["estudiantes"].attrs.get(
+        "registros_estudiante_duplicados",
+        pd.DataFrame(columns=["archivo_origen", "id_repetido", "id_tomado"]),
+    )
+    print("[2/6] Registro y consolidación de estudiantes duplicados...", flush=True)
+    stats_duplicados_estudiante = persistir_registros_duplicados(
+        registros_duplicados_estudiante
+    )
+    mapa_ids_estudiante_duplicados = obtener_mapa_ids_estudiante_duplicados()
+    datos["inscripciones"], inscripciones_remapeadas = remapear_ids_estudiante(
+        datos["inscripciones"], mapa_ids_estudiante_duplicados
+    )
+    reporte["estudiantes_duplicados"] = {
+        "ids_descartados": stats_duplicados_estudiante["registrados"],
+        "inscripciones_remapeadas": inscripciones_remapeadas,
+    }
+    print(
+        "  "
+        f"IDs duplicados registrados={stats_duplicados_estudiante['registrados']} | "
+        f"inscripciones remapeadas={inscripciones_remapeadas}",
+        flush=True,
+    )
+
+    # 3. Construcción dimensional.
+    print("[3/6] Construcción de dimensiones...", flush=True)
     fechas_tiempo = []
     if not datos["inscripciones"].empty:
         fechas_tiempo.extend(datos["inscripciones"]["fecha_inscripcion"].tolist())
@@ -1321,12 +1488,12 @@ def ejecutar_transformacion() -> Dict:
         flush=True,
     )
 
-    # 3. Truncate único de todo el DWH antes de cargar.
-    print("[3/5] Reinicio controlado de tablas DWH...", flush=True)
+    # 4. Truncate único de todo el DWH antes de cargar.
+    print("[4/6] Reinicio controlado de tablas DWH...", flush=True)
     truncar_dwh()
 
-    # 4. Carga de dimensiones.
-    print("[4/5] Carga de dimensiones y hechos...", flush=True)
+    # 5. Carga de dimensiones.
+    print("[5/6] Carga de dimensiones y hechos...", flush=True)
     cargar_tabla("dim_tiempo", dim_tiempo, reporte, stats_tiempo)
     cargar_tabla("dim_estudiante", dim_estudiante, reporte, stats_estudiante)
     cargar_tabla("dim_dictado", dim_dictado, reporte, stats_dictado)
@@ -1338,7 +1505,11 @@ def ejecutar_transformacion() -> Dict:
 
     # 6. Construcción de hechos.
     fact_inscripcion, stats_fact_inscripcion = construir_fact_inscripcion(
-        datos["inscripciones"], mapa_estudiante, mapa_dictado, mapa_tiempo
+        datos["inscripciones"],
+        datos["dictados"],
+        mapa_estudiante,
+        mapa_dictado,
+        mapa_tiempo,
     )
     fact_examen, stats_fact_examen = construir_fact_examen_estudiante(
         datos["examenes"],
@@ -1348,7 +1519,7 @@ def ejecutar_transformacion() -> Dict:
         mapa_tiempo,
     )
     fact_evaluacion, stats_fact_evaluacion = construir_fact_evaluacion_dictado(
-        datos["evaluaciones"], mapa_dictado, mapa_estudiante, mapa_tiempo
+        datos["evaluaciones"], mapa_dictado, mapa_tiempo
     )
 
     # 7. Carga de hechos.
@@ -1364,7 +1535,7 @@ def ejecutar_transformacion() -> Dict:
 
 
 def imprimir_reporte(reporte: Dict) -> None:
-    print("[5/5] Reporte final", flush=True)
+    print("[6/6] Reporte final", flush=True)
 
     problemas_staging = [
         (tabla, stats)
@@ -1377,6 +1548,15 @@ def imprimir_reporte(reporte: Dict) -> None:
             print(
                 f"  {tabla}: total={stats['total']} | rechazados={stats['rechazados']} | duplicados={stats['duplicados']}"
             )
+
+    duplicados_estudiante = reporte.get("estudiantes_duplicados")
+    if duplicados_estudiante:
+        print("\nConsolidación de estudiantes duplicados:")
+        print(
+            "  "
+            f"ids_descartados={duplicados_estudiante['ids_descartados']} | "
+            f"inscripciones_remapeadas={duplicados_estudiante['inscripciones_remapeadas']}"
+        )
 
     print("\nCarga DWH:")
     for tabla in TABLAS_DWH:

@@ -308,7 +308,14 @@ def aplicar_scd2_generico(
 
 def construir_lookups_completos() -> Dict[str, pd.DataFrame]:
     lookups = {}
-    for clave in ["facultades", "departamentos", "programas", "cursos", "docentes"]:
+    for clave in [
+        "facultades",
+        "departamentos",
+        "programas",
+        "cursos",
+        "docentes",
+        "dictados",
+    ]:
         df_raw = leer_staging_completo(TABLAS_STAGING[clave])
         lookups[clave], _ = limpiar_delta(clave, df_raw)
     return lookups
@@ -351,6 +358,12 @@ def procesar_incremental() -> Dict:
             print(
                 f"  Atención {TABLAS_STAGING[clave]}: rechazados={stats['rechazados']} | duplicados={stats['duplicados']}"
             )
+
+    mapa_ids_estudiante_duplicados = base_etl.obtener_mapa_ids_estudiante_duplicados()
+    if not deltas_limpios.get("inscripciones", pd.DataFrame()).empty:
+        deltas_limpios["inscripciones"], _ = base_etl.remapear_ids_estudiante(
+            deltas_limpios["inscripciones"], mapa_ids_estudiante_duplicados
+        )
 
     lookups = construir_lookups_completos()
 
@@ -406,7 +419,11 @@ def procesar_incremental() -> Dict:
 
     if not deltas_limpios.get("inscripciones", pd.DataFrame()).empty:
         fact_inscripcion, _ = base_etl.construir_fact_inscripcion(
-            deltas_limpios["inscripciones"], mapa_alumno, mapa_dictado, mapa_tiempo
+            deltas_limpios["inscripciones"],
+            lookups["dictados"],
+            mapa_alumno,
+            mapa_dictado,
+            mapa_tiempo,
         )
         hechos_insertados["fact_inscripcion"] = insert_ignore_dataframe(
             fact_inscripcion, "fact_inscripcion"
@@ -418,6 +435,9 @@ def procesar_incremental() -> Dict:
             inscripciones_raw = leer_staging_completo("stg_inscripcion")
             inscripciones_base, _ = base_etl.transformar_inscripcion_base(
                 inscripciones_raw
+            )
+            inscripciones_base, _ = base_etl.remapear_ids_estudiante(
+                inscripciones_base, mapa_ids_estudiante_duplicados
             )
         fact_examen, _ = base_etl.construir_fact_examen_alumno(
             deltas_limpios["examenes"],
@@ -432,7 +452,7 @@ def procesar_incremental() -> Dict:
 
     if not deltas_limpios.get("evaluaciones", pd.DataFrame()).empty:
         fact_evaluacion, _ = base_etl.construir_fact_evaluacion_dictado(
-            deltas_limpios["evaluaciones"], mapa_dictado, mapa_alumno, mapa_tiempo
+            deltas_limpios["evaluaciones"], mapa_dictado, mapa_tiempo
         )
         hechos_insertados["fact_evaluacion_dictado"] = insert_ignore_dataframe(
             fact_evaluacion, "fact_evaluacion_dictado"

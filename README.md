@@ -25,7 +25,6 @@ ADE2026_TpiUniversidad/
     │   ├── carga_staging.py                   
     │   ├── transformacion.ipynb               # ✅ Transforma Staging → DWH
     │   ├── transformacion.py                  
-    │   ├── PLANES_FUTUROS.md                  # Especificación de notebooks
     │   └── README.md                          # Especificación de notebooks
     │
     ├── 3-ETL_Incremental/
@@ -101,11 +100,6 @@ docker ps
 ```bash
 docker compose down
 ```
-### 5. Crear las bases de datos en MySQL
-```bash
-mysql -h 127.0.0.1 -u root -p < TP2/1-ScriptCreación_DB/CreacionSTG_Universidad.sql # la contraseña es root123
-mysql -h 127.0.0.1 -u root -p < TP2/1-ScriptCreación_DB/CreacionDWH_Universidad.sql # la contraseña es root123
-```
 ### 5. Ejecutar el ETL (en orden)
 ```bash
 # Paso 1: cargar CSV a Staging
@@ -130,8 +124,8 @@ python3 app.py
 
 ### Resetear el contenedor
 ```bash
-docker compose down
-docker compose up --build
+docker compose down -v
+docker compose up -d
 ```
 
 ---
@@ -157,6 +151,7 @@ sqlalchemy==2.0.23
 pymysql==1.1.0
 python-dotenv==1.0.0
 cryptography==47.0.0
+pyarrow==16.1.0
 ```
 ---
 ## 📝 Estado del proyecto
@@ -172,4 +167,3 @@ cryptography==47.0.0
 ## 📚 Documentación adicional
 - [`TP2/README.md`](TP2/README.md) — Guía detallada del ETL, troubleshooting y convenciones de código
 - [`TP2/LOGGING_README.md`](TP2/LOGGING_README.md) — Sistema centralizado de logging
-- [`TP2/2-ETL_CargaInicial/PLANES_FUTUROS.md`](TP2/2-ETL_CargaInicial/PLANES_FUTUROS.md) — Especificación de los componentes pendientes
