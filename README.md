@@ -71,8 +71,9 @@ El DWH sigue un **esquema estrella** con:
 - Docker y docker-comppse (opcional, para ejecutar MySQL en un contenedor)
 ### 2. Instalar dependencias
 ```bash
-cd TP2
-pip install -r requirements.txt
+python3.12 -m venv venv
+source venv/bin/activate
+pip install -r TP2/requirements.txt # demora bastante
 ```
 ### 3. Configurar variables de entorno
 ```bash
@@ -90,20 +91,20 @@ DWH_DATABASE=dw_universidad
 ```
 ### 4. Crear el contenedor MySQL (opcional)
 ```bash
-docker-compose up -d
+docker compose up -d
 ```
 - Ver estado del contenedor
 ```bash
-docker-compose ps
+docker ps
 ```
 - Detener el contenedor
 ```bash
-docker-compose down
+docker compose down
 ```
 ### 5. Crear las bases de datos en MySQL
 ```bash
-mysql -u root -p < TP2/1-ScriptCreación_DB/CreacionSTG_Universidad.sql
-mysql -u root -p < TP2/1-ScriptCreación_DB/CreacionDWH_Universidad.sql
+mysql -h 127.0.0.1 -u root -p < TP2/1-ScriptCreación_DB/CreacionSTG_Universidad.sql # la contraseña es root123
+mysql -h 127.0.0.1 -u root -p < TP2/1-ScriptCreación_DB/CreacionDWH_Universidad.sql # la contraseña es root123
 ```
 ### 5. Ejecutar el ETL (en orden)
 ```bash
@@ -114,10 +115,11 @@ jupyter notebook TP2/2-ETL_CargaInicial/transformacion.ipynb
 ```
 - O con python
 ```bash
+cd TP2/2-ETL_CargaInicial/
 # Paso 1: cargar CSV a Staging
-python3 TP2/2-ETL_CargaInicial/carga_staging.py
+python3 carga_staging.py
 # Paso 2: transformar Staging al DWH
-python3 TP2/2-ETL_CargaInicial/transformacion.py
+python3 transformacion.py
 ```
 ### 6. Ejecutar dashboard (opcional)
 ```bash
@@ -128,8 +130,8 @@ python3 app.py
 
 ### Resetear el contenedor
 ```bash
-docker-compose down
-docker-compose up --build
+docker compose down
+docker compose up --build
 ```
 
 ---

@@ -78,9 +78,9 @@ CREATE TABLE fact_examen_estudiante (
     n_intentos INT,
     aprobado BOOLEAN,
     UNIQUE (estudiante_skey, dictado_skey, n_intentos),
-    CONSTRAINT fk_exam_estudiante FOREIGN KEY (estudiante_skey) REFERENCES estudiante(estudiante_skey),
-    CONSTRAINT fk_exam_tiempo FOREIGN KEY (tiempo_skey) REFERENCES Tiempo(tiempo_skey),
-    CONSTRAINT fk_exam_dictado FOREIGN KEY (dictado_skey) REFERENCES Dictado(dictado_skey)
+    CONSTRAINT fk_exam_estudiante FOREIGN KEY (estudiante_skey) REFERENCES dim_estudiante(estudiante_skey),
+    CONSTRAINT fk_exam_tiempo FOREIGN KEY (tiempo_skey) REFERENCES dim_tiempo(tiempo_skey),
+    CONSTRAINT fk_exam_dictado FOREIGN KEY (dictado_skey) REFERENCES dim_dictado(dictado_skey)
 ) ENGINE=InnoDB;
 
 -- Tabla de Hecho: EvaluacionDictado
@@ -92,9 +92,9 @@ CREATE TABLE fact_evaluacion_dictado (
     nota_dictado DECIMAL(5,2),
     nota_cont DECIMAL(5,2),
     nota_general DECIMAL(5,2),
-    CONSTRAINT fk_eval_dictado FOREIGN KEY (dictado_skey) REFERENCES Dictado(dictado_skey),
-    CONSTRAINT fk_eval_estudiante FOREIGN KEY (estudiante_skey) REFERENCES estudiante(estudiante_skey),
-    CONSTRAINT fk_eval_tiempo FOREIGN KEY (tiempo_skey) REFERENCES Tiempo(tiempo_skey)
+    CONSTRAINT fk_eval_dictado FOREIGN KEY (dictado_skey) REFERENCES dim_dictado(dictado_skey),
+    CONSTRAINT fk_eval_estudiante FOREIGN KEY (estudiante_skey) REFERENCES dim_estudiante(estudiante_skey),
+    CONSTRAINT fk_eval_tiempo FOREIGN KEY (tiempo_skey) REFERENCES dim_tiempo(tiempo_skey)
 ) ENGINE=InnoDB;
 
 -- Tabla de Hecho: Inscripcion
@@ -106,7 +106,7 @@ CREATE TABLE fact_inscripcion (
     estado VARCHAR(50),
     abandono BOOLEAN DEFAULT FALSE,
     UNIQUE (estudiante_skey, dictado_skey),
-    CONSTRAINT fk_ins_estudiante FOREIGN KEY (estudiante_skey) REFERENCES estudiante(estudiante_skey),
-    CONSTRAINT fk_ins_tiempo FOREIGN KEY (tiempo_skey) REFERENCES Tiempo(tiempo_skey),
-    CONSTRAINT fk_ins_dictado FOREIGN KEY (dictado_skey) REFERENCES Dictado(dictado_skey)
+    CONSTRAINT fk_ins_estudiante FOREIGN KEY (estudiante_skey) REFERENCES dim_estudiante(estudiante_skey),
+    CONSTRAINT fk_ins_tiempo FOREIGN KEY (tiempo_skey) REFERENCES dim_tiempo(tiempo_skey),
+    CONSTRAINT fk_ins_dictado FOREIGN KEY (dictado_skey) REFERENCES dim_dictado(dictado_skey)
 ) ENGINE=InnoDB;

@@ -106,7 +106,6 @@ for handler in logger.handlers:
 
 print(f"[OK] Conexiones configuradas | STG={STG_DATABASE} | DWH={DWH_DATABASE}")
 
-
 # ============================================
 # CONSTANTES DEL DWH (nuevos nombres según CreacionDWH_Universidad.sql)
 # ============================================
@@ -144,7 +143,6 @@ MESES_ES = {
     11: "Noviembre",
     12: "Diciembre",
 }
-
 
 # ============================================
 # FUNCIONES DE LIMPIEZA Y VALIDACIÓN
