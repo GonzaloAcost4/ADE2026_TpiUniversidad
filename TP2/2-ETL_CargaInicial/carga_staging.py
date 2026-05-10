@@ -1,13 +1,19 @@
-import pandas as pd
-from sqlalchemy import create_engine, text
-from datetime import datetime
-from dotenv import load_dotenv
+#!/usr/bin/env python
+# coding: utf-8
+
+# In[1]:
+
+
 import os
-from pathlib import Path
 import sys
+from datetime import datetime, timedelta
+
+import pandas as pd
+from dotenv import load_dotenv
+from sqlalchemy import create_engine, text
 
 # Agregar ruta del proyecto al path para importar módulos
-sys.path.append(os.path.join(os.getcwd(), '..'))
+sys.path.append(os.path.join(os.getcwd(), ".."))
 
 # Importar el LoggerManager
 from logging_config import LoggerManager
@@ -24,33 +30,110 @@ DATABASE = os.getenv("STG_DATABASE")
 # Crear motor de conexión
 engine = create_engine(f"mysql+pymysql://{USER}:{PASSWORD}@{HOST}:{PORT}/{DATABASE}")
 
-# Configurar logger para este proceso (logs en carpeta actual: 2-ETL_CargaInicial/logs)
-logger = LoggerManager.configurar("carga_staging", ruta_raiz=os.getcwd(), carpeta_logs='logs')
+# Configurar logger para este proceso (logs en carpeta actual: 3-ETL_CargaInicial/logs)
+logger = LoggerManager.configurar(
+    "carga_staging", ruta_raiz=os.getcwd(), carpeta_logs="logs"
+)
 
 # Especificar ruta a la carpeta Sources
-RUTA_SOURCES = os.path.join(os.getcwd(), '..', 'Sources')
+RUTA_SOURCES = os.path.join(os.getcwd(), "..", "Sources")
 RUTA_SOURCES = os.path.abspath(RUTA_SOURCES)
 
 # Obtener ruta de logs (creada automáticamente por LoggerManager)
 RUTA_LOGS = LoggerManager.obtener_ruta_logs()
 
+
+# In[2]:
+
+
+def enriquecer_evaluacion_curso(df):
+    """
+    Completa evaluacion_curso.csv con la fecha de evaluación.
+
+    La evaluación es ANÓNIMA, por lo que NO se asigna id_estudiante.
+    
+    Solo se enriquece fecha_evaluacion usando el período y año académico del dictado:
+    - C1 -> 15/07 del año académico
+    - C2 -> 15/12 del año académico
+    
+    Si no se encuentra el dictado, usa la fecha actual como fallback para garantizar
+    que NO sea NULL.
+    """
+    if df.empty:
+        return df
+
+    if "fecha_evaluacion" in df.columns:
+        return df
+
+    ruta_dictados = os.path.join(RUTA_SOURCES, "dictado.csv")
+    
+    # Mapear fecha por dictado basado en período y año académico
+    fecha_por_dictado = {}
+    if os.path.exists(ruta_dictados):
+        try:
+            dictados = pd.read_csv(ruta_dictados, sep=",", dtype=str)
+            for _, row in dictados.iterrows():
+                id_dictado = str(row.get("id_dictado", "")).strip()
+                anio = str(row.get("anio_academico", "")).strip()
+                periodo = str(row.get("periodo", "")).strip().upper()
+                
+                if id_dictado and anio.isdigit():
+                    if periodo in {"C1", "1", "P1", "PRIMER", "PRIMERO"}:
+                        fecha_por_dictado[id_dictado] = f"{anio}-07-15"
+                    elif periodo in {"C2", "2", "P2", "SEGUNDO"}:
+                        fecha_por_dictado[id_dictado] = f"{anio}-12-15"
+        except Exception as e:
+            LoggerManager.warning(f"No se pudo leer dictado.csv: {e}")
+    else:
+        LoggerManager.warning("Archivo dictado.csv no encontrado para calcular fechas")
+
+    def calcular_fecha_evaluacion(row):
+        """Calcula fecha para evaluación anónima."""
+        id_dictado = str(row.get("id_dictado", "")).strip()
+        
+        # Intentar usar fecha del calendario académico
+        if id_dictado in fecha_por_dictado:
+            return fecha_por_dictado[id_dictado]
+        
+        # Fallback: usar fecha actual si no se puede determinar
+        return datetime.now().date().isoformat()
+
+    evaluaciones = df.copy()
+    evaluaciones["fecha_evaluacion"] = evaluaciones.apply(
+        calcular_fecha_evaluacion, axis=1
+    )
+    
+    # Verificar que no haya nulls
+    nulos = evaluaciones["fecha_evaluacion"].isna().sum()
+    if nulos > 0:
+        LoggerManager.warning(f"Se encontraron {nulos} fechas NULL (reemplazadas con hoy)")
+        evaluaciones.loc[evaluaciones["fecha_evaluacion"].isna(), "fecha_evaluacion"] = (
+            datetime.now().date().isoformat()
+        )
+
+    LoggerManager.info(
+        f"evaluacion_curso enriquecido: {len(evaluaciones)} registros con fecha_evaluacion (anónimo)"
+    )
+    return evaluaciones
+
+
 def cargar_csv_a_staging(archivo_csv, nombre_tabla_stg):
     """
     Lee un CSV desde Sources, lo carga con TRUNCATE (idempotente).
-    
+
     Estrategia: TRUNCATE + Full Load
     - Borra datos previos de la tabla
     - Carga datos completos y frescos
     - Garantiza NO hay duplicados
     - Seguro ejecutar múltiples veces
-    
+
     Args:
         archivo_csv: nombre del archivo CSV (ej: 'estudiante.csv')
         nombre_tabla_stg: nombre de la tabla staging en MySQL
     """
     try:
         ruta_completa = os.path.join(RUTA_SOURCES, archivo_csv)
-        
+
         # 1. Verificar que el archivo existe
         if not os.path.exists(ruta_completa):
             LoggerManager.error(f"Archivo no encontrado: {ruta_completa}")
@@ -67,29 +150,37 @@ def cargar_csv_a_staging(archivo_csv, nombre_tabla_stg):
             return False
 
         # 3. Leer CSV como strings (criterio: VARCHAR en Staging)
-        df = pd.read_csv(ruta_completa, sep=',', dtype=str)
-        
+        df = pd.read_csv(ruta_completa, sep=",", dtype=str)
+
         if df.empty:
             LoggerManager.warning(f"Archivo vacío: {archivo_csv}")
             return True
 
-        # 4. Renombrar columnas con sufijo '_raw'
-        df = df.add_suffix('_raw')
+        # 4. Enriquecimiento específico para que la evaluación pueda cargar al DWH
+        if nombre_tabla_stg == "stg_evaluacion_curso":
+            df = enriquecer_evaluacion_curso(df)
 
-        # 5. Inyectar metadatos
-        df['archivo_origen'] = os.path.basename(archivo_csv)
-        df['fecha_carga'] = datetime.now()
+        # 5. Renombrar columnas con sufijo '_raw'
+        df = df.add_suffix("_raw")
 
-        # 6. Carga masiva
-        df.to_sql(name=nombre_tabla_stg, con=engine, if_exists='append', index=False)
-        
+        # 6. Inyectar metadatos
+        df["archivo_origen"] = os.path.basename(archivo_csv)
+        df["fecha_carga"] = datetime.now()
+
+        # 7. Carga masiva
+        df.to_sql(name=nombre_tabla_stg, con=engine, if_exists="append", index=False)
+
         LoggerManager.info(f"Cargados {len(df)} registros en {nombre_tabla_stg}")
         return True
-        
+
     except Exception as e:
         LoggerManager.error(f"Error carga en {nombre_tabla_stg}: {str(e)}")
         return False
-    
+
+
+# In[3]:
+
+
 # ============================================
 # MAPEO DE ARCHIVOS CSV A TABLAS STAGING
 # ============================================
@@ -105,8 +196,12 @@ archivos_a_procesar = {
     "departamento.csv": "stg_departamento",
     "programa.csv": "stg_programa",
     "curso.csv": "stg_curso",
-    "curso_programa.csv": "stg_curso_programa"
+    "curso_programa.csv": "stg_curso_programa",
 }
+
+
+# In[4]:
+
 
 # ============================================
 # DIAGNÓSTICO PRE-CARGA
@@ -139,7 +234,7 @@ try:
                 query = text(f"SELECT COUNT(*) FROM {tabla}")
                 conn.execute(query)
                 LoggerManager.info(f"Tabla existe: {tabla}")
-            except:
+            except Exception:
                 print(f"[ERROR] {tabla} NO existe - Necesita ser creada!")
                 LoggerManager.error(f"Tabla no existe: {tabla}")
                 tablas_faltantes.append(tabla)
@@ -154,9 +249,15 @@ if diagnóstico_ok:
 else:
     LoggerManager.warning("Diagnóstico detectó problemas - revisar antes de proceder")
     if archivos_faltantes:
-        LoggerManager.warning(f"  - Archivos faltantes: {', '.join(archivos_faltantes)}")
+        LoggerManager.warning(
+            f"  - Archivos faltantes: {', '.join(archivos_faltantes)}"
+        )
     if tablas_faltantes:
         LoggerManager.warning(f"  - Tablas faltantes: {', '.join(tablas_faltantes)}")
+
+
+# In[5]:
+
 
 # ============================================
 # EJECUCIÓN DE CARGA IDEMPOTENTE

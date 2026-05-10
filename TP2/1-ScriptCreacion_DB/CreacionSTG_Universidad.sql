@@ -151,7 +151,6 @@ CREATE TABLE stg_evaluacion_curso (
     fecha_carga DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     id_evaluacion_raw VARCHAR(50) NULL,
     id_dictado_raw VARCHAR(50) NULL,
-    id_estudiante_raw VARCHAR(50) NULL,
     fecha_evaluacion_raw VARCHAR(80) NULL,
     puntaje_dictado_raw VARCHAR(50) NULL,
     puntaje_contenido_raw VARCHAR(50) NULL,

@@ -2,7 +2,7 @@ CREATE DATABASE IF NOT EXISTS dw_universidad;
 USE dw_universidad;
 
 -- Tabla Dimensión: Tiempo
-CREATE TABLE Tiempo (
+CREATE TABLE dim_tiempo (
     tiempoSKey INT PRIMARY KEY,
     fecha DATE NOT NULL,
     dia INT NOT NULL,
@@ -13,7 +13,7 @@ CREATE TABLE Tiempo (
 ) ENGINE=InnoDB;
 
 -- Tabla Dimensión: Dictado
-CREATE TABLE Dictado (
+CREATE TABLE dim_dictado (
     dictadoSKey INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
     idDictado INT NOT NULL,
     periodo INT,
@@ -41,8 +41,8 @@ CREATE TABLE Dictado (
     CONSTRAINT chk_vigencia_dictado CHECK (valid_to IS NULL OR valid_to >= valid_from)
 ) ENGINE=InnoDB;
 
--- Tabla Dimensión: Alumno
-CREATE TABLE Alumno (
+-- Tabla Dimensión: Estudiante
+CREATE TABLE dim_estudiante (
     alumnoSKey INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
     idalumno INT NOT NULL,
     dni INT NOT NULL,
@@ -68,7 +68,7 @@ CREATE TABLE Alumno (
 ) ENGINE=InnoDB;
 
 -- Tabla de Hecho: ExamenAlumno
-CREATE TABLE ExamenAlumno (
+CREATE TABLE fact_examen_estudiante (
     examAlumSK INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
     alumnoSKey INT NOT NULL,
     tiempoSKey INT NOT NULL,
@@ -77,27 +77,25 @@ CREATE TABLE ExamenAlumno (
     nroIntentos INT,
     aprobado BOOLEAN,
     UNIQUE (alumnoSKey, dictadoSKey, nroIntentos),
-    CONSTRAINT fk_exam_alumno FOREIGN KEY (alumnoSKey) REFERENCES Alumno(alumnoSKey),
-    CONSTRAINT fk_exam_tiempo FOREIGN KEY (tiempoSKey) REFERENCES Tiempo(tiempoSKey),
-    CONSTRAINT fk_exam_dictado FOREIGN KEY (dictadoSKey) REFERENCES Dictado(dictadoSKey)
+    CONSTRAINT fk_exam_alumno FOREIGN KEY (alumnoSKey) REFERENCES dim_estudiante(alumnoSKey),
+    CONSTRAINT fk_exam_tiempo FOREIGN KEY (tiempoSKey) REFERENCES dim_tiempo(tiempoSKey),
+    CONSTRAINT fk_exam_dictado FOREIGN KEY (dictadoSKey) REFERENCES dim_dictado(dictadoSKey)
 ) ENGINE=InnoDB;
 
 -- Tabla de Hecho: EvaluacionDictado
-CREATE TABLE EvaluacionDictado (
+CREATE TABLE fact_evaluacion_dictado (
     evalDicSKey INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
     dictadoSKey INT NOT NULL,
-    alumnoSKey INT NOT NULL,
     tiempoSKey INT NOT NULL,
     notaDictado DECIMAL(5,2),
     notaCont DECIMAL(5,2),
     notaGeneral DECIMAL(5,2),
-    CONSTRAINT fk_eval_dictado FOREIGN KEY (dictadoSKey) REFERENCES Dictado(dictadoSKey),
-    CONSTRAINT fk_eval_alumno FOREIGN KEY (alumnoSKey) REFERENCES Alumno(alumnoSKey),
-    CONSTRAINT fk_eval_tiempo FOREIGN KEY (tiempoSKey) REFERENCES Tiempo(tiempoSKey)
+    CONSTRAINT fk_eval_dictado FOREIGN KEY (dictadoSKey) REFERENCES dim_dictado(dictadoSKey),
+    CONSTRAINT fk_eval_tiempo FOREIGN KEY (tiempoSKey) REFERENCES dim_tiempo(tiempoSKey)
 ) ENGINE=InnoDB;
 
 -- Tabla de Hecho: Inscripcion
-CREATE TABLE Inscripcion (
+CREATE TABLE fact_inscripcion (
     InscripSKey INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
     alumnoSKey INT NOT NULL,
     tiempoSKey INT NOT NULL,
@@ -105,7 +103,7 @@ CREATE TABLE Inscripcion (
     estado VARCHAR(50),
     abandono BOOLEAN DEFAULT FALSE,
     UNIQUE (alumnoSKey, dictadoSKey),
-    CONSTRAINT fk_ins_alumno FOREIGN KEY (alumnoSKey) REFERENCES Alumno(alumnoSKey),
-    CONSTRAINT fk_ins_tiempo FOREIGN KEY (tiempoSKey) REFERENCES Tiempo(tiempoSKey),
-    CONSTRAINT fk_ins_dictado FOREIGN KEY (dictadoSKey) REFERENCES Dictado(dictadoSKey)
+    CONSTRAINT fk_ins_alumno FOREIGN KEY (alumnoSKey) REFERENCES dim_estudiante(alumnoSKey),
+    CONSTRAINT fk_ins_tiempo FOREIGN KEY (tiempoSKey) REFERENCES dim_tiempo(tiempoSKey),
+    CONSTRAINT fk_ins_dictado FOREIGN KEY (dictadoSKey) REFERENCES dim_dictado(dictadoSKey)
 ) ENGINE=InnoDB;
