@@ -153,56 +153,49 @@ class DataCleaner:
     """Funciones reutilizables de limpieza y validación de datos de staging."""
 
     @staticmethod
-    def limpiar_string(valor) -> Optional[str]:
-        """Limpia strings, nulos textuales, espacios y mojibake evidente."""
+    def limpiar_string(valor: str) -> str:
+        """Limpia strings: espacios, codificación, minúsculas."""
         if pd.isna(valor) or valor is None:
             return None
+        
+        # Convertir a string si no lo es
+        valor = str(valor).strip().title()
 
-        texto = str(valor).strip()
-        if texto.lower() in {"", "null", "none", "n/a", "na", "sin dato", "s/d"}:
-            return None
-
-        # Solo intenta reparar encoding si detecta caracteres típicos de mojibake.
-        if any(marca in texto for marca in ["Ã", "Â", "�"]):
-            for origen, destino in [("latin-1", "utf-8"), ("cp1252", "utf-8")]:
-                try:
-                    reparado = texto.encode(origen).decode(destino)
-                    if "�" not in reparado:
-                        texto = reparado
-                        break
-                except Exception:
-                    continue
-
-        return " ".join(texto.split())
+        return valor
 
     @staticmethod
-    def limpiar_numero(valor, tipo: str = "float", requerido: bool = False):
-        """Convierte números sucios a int o float."""
+    def limpiar_numero(valor, tipo='float', requerido=False) -> any:
+        """Convierte y valida números."""
         if pd.isna(valor) or valor is None:
             if requerido:
-                LoggerManager.warning("Valor numérico requerido faltante")
+                logger.warning("Valor requerido faltante")
             return None
-
-        texto = str(valor).strip()
-        if texto.lower() in {"", "null", "none", "n/a", "na", "sin dato", "s/d"}:
+        
+        valor_str = str(valor).strip()
+        
+        if valor_str.lower() in ['', 'null', 'none', 'n/a']:
             return None
-
+        
         try:
-            texto = texto.replace(".", "") if texto.count(".") > 1 else texto
-            texto = texto.replace(",", ".").replace(" ", "")
-            numero = float(texto)
-
-            if tipo == "int":
-                if not numero.is_integer():
-                    LoggerManager.warning(
-                        f"Número no entero convertido por truncamiento: '{valor}'"
-                    )
-                return int(numero)
-            if tipo == "float":
-                return float(numero)
-            return None
+            if tipo == 'int':
+                # Para enteros, sí eliminamos separadores de miles.
+                valor_str = valor_str.replace('.', '').replace(',', '').replace(' ', '')
+                return int(float(valor_str))
+            elif tipo == 'float':
+                # Para decimales, preservamos el separador decimal.
+                valor_str = valor_str.replace(' ', '')
+                if ',' in valor_str and '.' in valor_str:
+                    if valor_str.rfind(',') > valor_str.rfind('.'):
+                        valor_str = valor_str.replace('.', '').replace(',', '.')
+                    else:
+                        valor_str = valor_str.replace(',', '')
+                elif ',' in valor_str:
+                    valor_str = valor_str.replace(',', '.')
+                return float(valor_str)
+            else:
+                return None
         except Exception:
-            LoggerManager.warning(f"No se pudo convertir '{valor}' a {tipo}")
+            logger.warning(f"No se pudo convertir '{valor}' a {tipo}")
             return None
 
     @staticmethod
@@ -250,14 +243,12 @@ class DataCleaner:
             return "M"
         if texto in {"F", "FEMENINO", "FEMALE", "MUJER", "2"}:
             return "F"
-        if texto in {"X", "OTRO", "OTRA", "NO BINARIO", "NB"}:
-            return "X"
 
         LoggerManager.warning(f"Género desconocido: '{valor}'")
         return None
 
     @staticmethod
-    def validar_dni(dni) -> bool:
+    def limpiar_dni(dni) -> bool:
         """Valida DNI argentino en rango de 7 a 8 dígitos."""
         if pd.isna(dni) or dni is None:
             return False
@@ -266,87 +257,13 @@ class DataCleaner:
             return 1_000_000 <= dni_int <= 99_999_999
         except Exception:
             return False
-
+    
     @staticmethod
-    def validar_nota(nota, minimo: float = 0, maximo: float = 10) -> bool:
-        """Valida que una nota/puntaje esté dentro de un rango."""
-        if pd.isna(nota) or nota is None:
-            return False
-        try:
-            return minimo <= float(nota) <= maximo
-        except Exception:
-            return False
-
-    @staticmethod
-    def normalizar_estado_inscripcion(valor) -> Optional[str]:
-        texto = DataCleaner.limpiar_string(valor)
-        if texto is None:
-            return None
-
-        normalizado = texto.strip().lower()
-        if normalizado in {
-            "activa",
-            "activo",
-            "inscripto",
-            "inscripta",
-            "cursando",
-            "regular",
-        }:
-            return "Activa"
-        if normalizado in {"aprobada", "aprobado", "finalizada", "finalizado"}:
-            return "Aprobada"
-        if normalizado in {"abandonada", "abandonado", "abandono", "baja"}:
-            return "Abandonada"
-        if normalizado in {
-            "rechazada",
-            "rechazado",
-            "cancelada",
-            "cancelado",
-            "anulada",
-            "anulado",
-        }:
-            return "Cancelada"
-        return texto.title()
-
-    @staticmethod
-    def normalizar_periodo(valor) -> Optional[int]:
-        """Normaliza período académico a entero compatible con Dictado.periodo."""
-        texto = DataCleaner.limpiar_string(valor)
-        if texto is None:
-            return None
-
-        normalizado = texto.strip().upper()
-        if normalizado in {"C1", "1", "P1", "PRIMER", "PRIMERO", "PRIMER CUATRIMESTRE"}:
-            return 1
-        if normalizado in {"C2", "2", "P2", "SEGUNDO", "SEGUNDO CUATRIMESTRE"}:
-            return 2
-
-        numero = DataCleaner.limpiar_numero(texto, "int")
-        if numero in {1, 2}:
-            return int(numero)
-
-        LoggerManager.warning(f"Período académico desconocido: '{valor}'")
-        return None
-
-    @staticmethod
-    def normalizar_resultado_examen(valor, nota=None) -> Optional[bool]:
-        """Devuelve True/False para aprobado. Si no hay texto, infiere por nota >= 4."""
-        texto = DataCleaner.limpiar_string(valor)
-        if texto is not None:
-            normalizado = texto.lower()
-            if normalizado in {"aprobado", "aprob", "sí", "si", "1", "true", "a"}:
-                return True
-            if normalizado in {"desaprobado", "desaprob", "no", "0", "false", "d"}:
-                return False
-            if normalizado in {"ausente", "pendiente", "no rindio", "no rindió"}:
-                return False
-
-        if nota is not None and not pd.isna(nota):
-            return float(nota) >= 4
-
-        return None
-
-
+    def limpiar_nacionalidad(valor: str) -> str:
+        """Normaliza valores de nacionalidad."""
+        if pd.isna(valor) or valor is None:
+            return 'No especificado'
+        return valor
 # ============================================
 # UTILIDADES GENERALES
 # ============================================
@@ -448,7 +365,7 @@ def transformar_estudiante_base(df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict]:
     df["nombre"] = df["nombre_raw"].apply(cleaner.limpiar_string)
     df["genero"] = df["genero_raw"].apply(cleaner.limpiar_genero)
     df["fecha_nacimiento"] = df["fecha_nacimiento_raw"].apply(cleaner.limpiar_fecha)
-    df["nacionalidad"] = df["nacionalidad_raw"].apply(cleaner.limpiar_string)
+    df["nacionalidad"] = df["nacionalidad_raw"].apply(cleaner.limpiar_nacionalidad)
     df["id_programa"] = df["id_programa_raw"].apply(
         lambda x: cleaner.limpiar_numero(x, "int")
     )
@@ -459,7 +376,7 @@ def transformar_estudiante_base(df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict]:
 
     valido = (
         df["id_estudiante"].notna()
-        & df["dni"].apply(cleaner.validar_dni)
+        & df["dni"].apply(cleaner.limpiar_dni)
         & df["apellido"].notna()
         & df["nombre"].notna()
         & df["id_programa"].notna()
@@ -669,7 +586,7 @@ def transformar_dictado_base(df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict]:
     df["id_programa"] = df["id_programa_raw"].apply(
         lambda x: cleaner.limpiar_numero(x, "int")
     )
-    df["periodo"] = df["periodo_raw"].apply(cleaner.normalizar_periodo)
+    df["periodo"] = df["periodo_raw"].apply(cleaner.limpiar_string)
     df["turno"] = df["turno_raw"].apply(cleaner.limpiar_string)
     df["aula"] = df["aula_raw"].apply(cleaner.limpiar_string)
     df["cupo_maximo"] = df["cupo_maximo_raw"].apply(
@@ -713,7 +630,7 @@ def transformar_inscripcion_base(df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict]:
         lambda x: cleaner.limpiar_numero(x, "int")
     )
     df["fecha_inscripcion"] = df["fecha_inscripcion_raw"].apply(cleaner.limpiar_fecha)
-    df["estado"] = df["estado_raw"].apply(cleaner.normalizar_estado_inscripcion)
+    df["estado"] = df["estado_raw"].apply(cleaner.limpiar_string)
 
     valido = (
         df["id_inscripcion"].notna()
@@ -751,18 +668,15 @@ def transformar_examen_base(df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict]:
     df["numero_intento"] = df["numero_intento_raw"].apply(
         lambda x: cleaner.limpiar_numero(x, "int")
     )
-    df["aprobado"] = df.apply(
-        lambda row: cleaner.normalizar_resultado_examen(
-            row["resultado_raw"], row["nota"]
-        ),
-        axis=1,
-    )
+    df["resultado"] = df["resultado_raw"].apply(cleaner.limpiar_string)
+
+    df.loc[df["nota"].notna() & ((df["nota"] < 0) | (df["nota"] > 10)), "nota"] = None
 
     valido = (
         df["id_examen"].notna()
         & df["id_inscripcion"].notna()
         & df["fecha"].notna()
-        & df["nota"].apply(lambda x: cleaner.validar_nota(x, 0, 10))
+        & df["nota"].notna()
         & df["numero_intento"].notna()
         & (df["numero_intento"] > 0)
     )
@@ -776,7 +690,7 @@ def transformar_examen_base(df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict]:
         "fecha",
         "nota",
         "numero_intento",
-        "aprobado",
+        "resultado",
     ]
     return validos[columnas], estadisticas(total, len(validos), duplicados)
 
@@ -813,18 +727,10 @@ def transformar_evaluacion_base(df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict]:
         lambda x: cleaner.limpiar_numero(x, "float")
     )
 
-    puntajes_validos = (
-        df["puntaje_dictado"].apply(lambda x: cleaner.validar_nota(x, 0, 10))
-        & df["puntaje_contenido"].apply(lambda x: cleaner.validar_nota(x, 0, 10))
-        & df["valoracion_general"].apply(lambda x: cleaner.validar_nota(x, 0, 10))
-    )
-
-    # Validación: id_evaluacion, id_dictado, fecha y puntajes válidos. Sin id_estudiante.
     valido = (
         df["id_evaluacion"].notna()
         & df["id_dictado"].notna()
         & df["fecha_evaluacion"].notna()
-        & puntajes_validos
     )
     validos = df[valido].copy()
     registrar_rechazos("stg_evaluacion_curso", total, len(validos))
@@ -1077,6 +983,8 @@ def construir_fact_examen_estudiante(
     )
 
     validos = validos.sort_values(["fecha", "id_examen"])
+    # Crear columna aprobado: TRUE si resultado es "Aprobado", FALSE si es "Desaprobado"
+    validos["aprobado"] = validos["resultado"].fillna("").str.lower() == "aprobado"
     resultado = validos[
         [
             "alumnoSKey",
@@ -1189,7 +1097,6 @@ def insertar_dataframe(
                 con=engine_dwh,
                 if_exists="append",
                 index=False,
-                method="multi",
             )
             resultados["insertados"] += len(lote)
             resultados["lotes"] += 1
