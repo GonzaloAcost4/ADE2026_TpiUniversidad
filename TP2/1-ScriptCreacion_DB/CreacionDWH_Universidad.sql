@@ -87,13 +87,11 @@ CREATE TABLE fact_examen_estudiante (
 CREATE TABLE fact_evaluacion_dictado (
     eval_dic_skey INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
     dictado_skey INT NOT NULL,
-    estudiante_skey INT NOT NULL,
     tiempo_skey INT NOT NULL,
     nota_dictado DECIMAL(5,2),
     nota_cont DECIMAL(5,2),
     nota_general DECIMAL(5,2),
     CONSTRAINT fk_eval_dictado FOREIGN KEY (dictado_skey) REFERENCES dim_dictado(dictado_skey),
-    CONSTRAINT fk_eval_estudiante FOREIGN KEY (estudiante_skey) REFERENCES dim_estudiante(estudiante_skey),
     CONSTRAINT fk_eval_tiempo FOREIGN KEY (tiempo_skey) REFERENCES dim_tiempo(tiempo_skey)
 ) ENGINE=InnoDB;
 

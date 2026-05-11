@@ -152,12 +152,10 @@ CREATE TABLE stg_evaluacion_curso (
     fecha_carga DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     id_evaluacion_raw VARCHAR(50) NULL,
     id_dictado_raw VARCHAR(50) NULL,
-    id_estudiante_raw VARCHAR(50) NULL,
     fecha_evaluacion_raw VARCHAR(80) NULL,
     puntaje_dictado_raw VARCHAR(50) NULL,
     puntaje_contenido_raw VARCHAR(50) NULL,
     valoracion_general_raw VARCHAR(50) NULL,
     INDEX IX_stg_eval_id (id_evaluacion_raw),
     INDEX IX_stg_eval_dictado (id_dictado_raw),
-    INDEX IX_stg_eval_estudiante (id_estudiante_raw)
 ) ENGINE=InnoDB;

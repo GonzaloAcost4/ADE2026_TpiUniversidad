@@ -285,26 +285,14 @@ class DataCleaner:
 
         normalizado = texto.strip().lower()
         if normalizado in {
-            "activa",
-            "activo",
-            "inscripto",
-            "inscripta",
-            "cursando",
-            "regular",
-        }:
+            "activa", "activo", "inscripto", "inscripta", "cursando", "regular"}:
             return "Activa"
         if normalizado in {"aprobada", "aprobado", "finalizada", "finalizado"}:
             return "Aprobada"
         if normalizado in {"abandonada", "abandonado", "abandono", "baja"}:
             return "Abandonada"
         if normalizado in {
-            "rechazada",
-            "rechazado",
-            "cancelada",
-            "cancelado",
-            "anulada",
-            "anulado",
-        }:
+            "rechazada", "rechazado", "cancelada", "cancelado", "anulada", "anulado"}:
             return "Cancelada"
         return texto.title()
 
