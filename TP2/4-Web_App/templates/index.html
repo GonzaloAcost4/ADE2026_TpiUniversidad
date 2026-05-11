@@ -1,0 +1,571 @@
+<!doctype html>
+<html lang="es">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>Explorador STG / DWH</title>
+        <link
+            href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css"
+            rel="stylesheet"
+        />
+        <script src="https://cdn.plot.ly/plotly-2.20.0.min.js"></script>
+        <style>
+            body {
+                background: #f8f9fa;
+            }
+            .sql-textarea {
+                min-height: 320px;
+                font-family: Consolas, monospace;
+            }
+            .result-table td,
+            .result-table th {
+                white-space: nowrap;
+            }
+            .badge-soft {
+                background: #e9ecef;
+                color: #212529;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="container-fluid my-4 px-4">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <div>
+                    <h2 class="mb-1">Explorador STG / DWH</h2>
+                    <div class="text-muted">
+                        Visualización de tablas, gráficos rápidos y ejecución de
+                        SQL libre en entorno local.
+                    </div>
+                </div>
+            </div>
+
+            <ul class="nav nav-tabs" id="tabs" role="tablist">
+                <li class="nav-item" role="presentation">
+                    <button
+                        class="nav-link active"
+                        id="dash-tab"
+                        data-bs-toggle="tab"
+                        data-bs-target="#dash"
+                        type="button"
+                        role="tab"
+                    >
+                        Dashboard
+                    </button>
+                </li>
+                <li class="nav-item" role="presentation">
+                    <button
+                        class="nav-link"
+                        id="sql-tab"
+                        data-bs-toggle="tab"
+                        data-bs-target="#sql"
+                        type="button"
+                        role="tab"
+                    >
+                        SQL Explorer
+                    </button>
+                </li>
+            </ul>
+
+            <div class="tab-content mt-3">
+                <div
+                    class="tab-pane fade show active"
+                    id="dash"
+                    role="tabpanel"
+                >
+                    <div class="row g-3">
+                        <div class="col-lg-3">
+                            <div class="card shadow-sm h-100">
+                                <div class="card-body">
+                                    <h5 class="card-title">
+                                        Exploración rápida
+                                    </h5>
+                                    <div class="mb-3">
+                                        <label for="dbSelect" class="form-label"
+                                            >Base</label
+                                        >
+                                        <select
+                                            id="dbSelect"
+                                            class="form-select"
+                                        ></select>
+                                    </div>
+                                    <div class="mb-3">
+                                        <label
+                                            for="tableSelect"
+                                            class="form-label"
+                                            >Tabla</label
+                                        >
+                                        <select
+                                            id="tableSelect"
+                                            class="form-select"
+                                        ></select>
+                                    </div>
+                                    <div class="mb-3">
+                                        <label for="xSelect" class="form-label"
+                                            >Eje X</label
+                                        >
+                                        <select
+                                            id="xSelect"
+                                            class="form-select"
+                                        ></select>
+                                    </div>
+                                    <div class="mb-3">
+                                        <label for="ySelect" class="form-label"
+                                            >Eje Y (opcional)</label
+                                        >
+                                        <select
+                                            id="ySelect"
+                                            class="form-select"
+                                        >
+                                            <option value="">
+                                                -- count por X --
+                                            </option>
+                                        </select>
+                                    </div>
+                                    <div class="mb-3">
+                                        <label
+                                            for="chartType"
+                                            class="form-label"
+                                            >Tipo de gráfico</label
+                                        >
+                                        <select
+                                            id="chartType"
+                                            class="form-select"
+                                        >
+                                            <option value="bar">Bar</option>
+                                            <option value="pie">Pie</option>
+                                            <option value="line">Line</option>
+                                        </select>
+                                    </div>
+                                    <div class="mb-3">
+                                        <label
+                                            for="chartLimit"
+                                            class="form-label"
+                                            >Límite</label
+                                        >
+                                        <input
+                                            id="chartLimit"
+                                            type="number"
+                                            class="form-control"
+                                            value="1000"
+                                            min="1"
+                                            max="20000"
+                                        />
+                                    </div>
+                                    <div class="d-grid">
+                                        <button
+                                            id="renderBtn"
+                                            class="btn btn-primary"
+                                        >
+                                            Renderizar
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="col-lg-9">
+                            <div class="row g-3">
+                                <div class="col-12">
+                                    <div class="card shadow-sm">
+                                        <div class="card-body">
+                                            <div
+                                                class="d-flex justify-content-between align-items-center mb-2"
+                                            >
+                                                <h5 class="card-title mb-0">
+                                                    Gráfico
+                                                </h5>
+                                                <span
+                                                    id="tableBadge"
+                                                    class="badge badge-soft"
+                                                ></span>
+                                            </div>
+                                            <div
+                                                id="chart"
+                                                style="
+                                                    width: 100%;
+                                                    height: 420px;
+                                                "
+                                            ></div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-lg-5">
+                                    <div class="card shadow-sm h-100">
+                                        <div class="card-body">
+                                            <h5 class="card-title">Esquema</h5>
+                                            <div id="schemaPreview"></div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-lg-7">
+                                    <div class="card shadow-sm h-100">
+                                        <div class="card-body">
+                                            <h5 class="card-title">
+                                                Preview de datos
+                                            </h5>
+                                            <div id="preview"></div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="tab-pane fade" id="sql" role="tabpanel">
+                    <div class="row g-3">
+                        <div class="col-lg-3">
+                            <div class="card shadow-sm h-100">
+                                <div class="card-body">
+                                    <h5 class="card-title">Parámetros</h5>
+                                    <div class="mb-3">
+                                        <label for="sqlDb" class="form-label"
+                                            >Base</label
+                                        >
+                                        <select
+                                            id="sqlDb"
+                                            class="form-select"
+                                        ></select>
+                                    </div>
+                                    <div class="mb-3">
+                                        <label
+                                            for="presetQuery"
+                                            class="form-label"
+                                            >Consultas de ejemplo</label
+                                        >
+                                        <select
+                                            id="presetQuery"
+                                            class="form-select"
+                                        >
+                                            <option value="">
+                                                -- seleccionar ejemplo --
+                                            </option>
+                                            <option
+                                                value="WITH repetidos AS ( SELECT id_tomado, COUNT(*) AS cantidad_ids_descartados FROM stg_reg_repetidos GROUP BY id_tomado ) SELECT * FROM repetidos ORDER BY cantidad_ids_descartados DESC;"
+                                            >
+                                                Duplicados consolidados en
+                                                staging
+                                            </option>
+                                            <option
+                                                value="SELECT nombre_prog, COUNT(*) AS cantidad_estudiantes FROM dim_estudiante WHERE es_actual = TRUE GROUP BY nombre_prog ORDER BY cantidad_estudiantes DESC;"
+                                            >
+                                                Estudiantes por programa
+                                            </option>
+                                            <option
+                                                value="SELECT dd.nombre_curso, COUNT(*) AS cantidad_inscripciones FROM fact_inscripcion fi JOIN dim_dictado dd ON fi.dictado_skey = dd.dictado_skey WHERE dd.es_actual = TRUE GROUP BY dd.nombre_curso ORDER BY cantidad_inscripciones DESC;"
+                                            >
+                                                Inscripciones por curso
+                                            </option>
+                                            <option
+                                                value="SELECT dd.nombre_curso, AVG(fe.nota) AS promedio_nota FROM fact_examen_estudiante fe JOIN dim_dictado dd ON fe.dictado_skey = dd.dictado_skey WHERE dd.es_actual = TRUE GROUP BY dd.nombre_curso ORDER BY promedio_nota DESC;"
+                                            >
+                                                Promedio de examen por curso
+                                            </option>
+                                        </select>
+                                    </div>
+                                    <div class="small text-muted mb-3">
+                                        La ejecución SQL está pensada para uso
+                                        local. Podés correr SELECT, CTE, SHOW,
+                                        EXPLAIN y también sentencias de
+                                        mantenimiento si lo necesitás.
+                                    </div>
+                                    <div class="d-grid gap-2">
+                                        <button
+                                            id="runSql"
+                                            class="btn btn-success"
+                                        >
+                                            Ejecutar SQL
+                                        </button>
+                                        <button
+                                            id="clearSql"
+                                            class="btn btn-secondary"
+                                        >
+                                            Limpiar
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="col-lg-9">
+                            <div class="card shadow-sm">
+                                <div class="card-body">
+                                    <label
+                                        for="sqlText"
+                                        class="form-label fw-semibold"
+                                        >Consulta SQL</label
+                                    >
+                                    <textarea
+                                        id="sqlText"
+                                        class="form-control sql-textarea"
+                                        spellcheck="false"
+                                    >
+SELECT * FROM stg_reg_repetidos;</textarea
+                                    >
+                                    <hr />
+                                    <div
+                                        class="d-flex justify-content-between align-items-center mb-2"
+                                    >
+                                        <h5 class="card-title mb-0">
+                                            Resultado
+                                        </h5>
+                                        <span
+                                            id="sqlMeta"
+                                            class="badge badge-soft"
+                                        ></span>
+                                    </div>
+                                    <div id="sqlResult"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+        <script>
+            let meta = null;
+
+            async function fetchMeta() {
+                const r = await fetch("/api/meta");
+                return r.json();
+            }
+
+            async function fetchSchema(db, table) {
+                const r = await fetch(
+                    `/api/schema?db=${db}&table=${encodeURIComponent(table)}`,
+                );
+                return r.json();
+            }
+
+            async function fetchPreview(db, table) {
+                const r = await fetch(
+                    `/api/data?db=${db}&table=${encodeURIComponent(table)}&limit=50`,
+                );
+                return r.json();
+            }
+
+            function fillSelect(el, items, labels = null) {
+                el.innerHTML = "";
+                for (const it of items) {
+                    const opt = document.createElement("option");
+                    opt.value = it;
+                    opt.textContent = labels && labels[it] ? labels[it] : it;
+                    el.appendChild(opt);
+                }
+            }
+
+            function renderTable(targetId, rows) {
+                const target = document.getElementById(targetId);
+                if (!rows || rows.length === 0) {
+                    target.innerHTML =
+                        '<div class="text-muted"><i>Sin datos</i></div>';
+                    return;
+                }
+                const cols = Object.keys(rows[0]);
+                let html =
+                    '<div class="table-responsive"><table class="table table-sm table-striped table-hover result-table"><thead><tr>' +
+                    cols.map((c) => `<th>${c}</th>`).join("") +
+                    "</tr></thead><tbody>";
+                for (const row of rows) {
+                    html +=
+                        "<tr>" +
+                        cols
+                            .map(
+                                (c) =>
+                                    `<td>${String(row[c] === null ? "" : row[c])}</td>`,
+                            )
+                            .join("") +
+                        "</tr>";
+                }
+                html += "</tbody></table></div>";
+                target.innerHTML = html;
+            }
+
+            function renderSchema(schema) {
+                const target = document.getElementById("schemaPreview");
+                if (!schema || schema.length === 0) {
+                    target.innerHTML =
+                        '<div class="text-muted"><i>Sin esquema</i></div>';
+                    return;
+                }
+                let html =
+                    '<div class="table-responsive"><table class="table table-sm table-striped"><thead><tr><th>Campo</th><th>Tipo</th><th>Null</th><th>Key</th><th>Extra</th></tr></thead><tbody>';
+                for (const col of schema) {
+                    html += `<tr><td>${col.Field}</td><td>${col.Type}</td><td>${col.Null}</td><td>${col.Key}</td><td>${col.Extra}</td></tr>`;
+                }
+                html += "</tbody></table></div>";
+                target.innerHTML = html;
+            }
+
+            async function loadDashboardSchemaAndPreview() {
+                const db = document.getElementById("dbSelect").value;
+                const table = document.getElementById("tableSelect").value;
+                document.getElementById("tableBadge").textContent =
+                    `${meta.databases[db].schema}.${table}`;
+
+                const schema = await fetchSchema(db, table);
+                if (schema.error) {
+                    alert(schema.error);
+                    return;
+                }
+
+                const cols = schema.schema.map((c) => c.Field);
+                fillSelect(document.getElementById("xSelect"), cols);
+                fillSelect(
+                    document.getElementById("ySelect"),
+                    [""].concat(cols),
+                );
+                renderSchema(schema.schema);
+
+                const preview = await fetchPreview(db, table);
+                renderTable("preview", preview.rows || []);
+            }
+
+            function loadTablesFor(dbSelectId, tableSelectId) {
+                const db = document.getElementById(dbSelectId).value;
+                const tables = meta.databases[db].tables;
+                fillSelect(document.getElementById(tableSelectId), tables);
+            }
+
+            async function renderChart() {
+                const db = document.getElementById("dbSelect").value;
+                const table = document.getElementById("tableSelect").value;
+                const x = document.getElementById("xSelect").value;
+                const y = document.getElementById("ySelect").value;
+                const chartType = document.getElementById("chartType").value;
+                const limit = parseInt(
+                    document.getElementById("chartLimit").value || "1000",
+                    10,
+                );
+
+                const r = await fetch("/api/chart", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        db,
+                        table,
+                        x,
+                        y,
+                        chart: chartType,
+                        limit,
+                    }),
+                });
+                const j = await r.json();
+                if (j.error) {
+                    alert(j.error);
+                    return;
+                }
+
+                const data = j.chart.data || [];
+                if (data.length === 0) {
+                    document.getElementById("chart").innerHTML =
+                        '<div class="text-muted"><i>No hay datos para graficar</i></div>';
+                    return;
+                }
+
+                const xs = data.map((d) => d.x);
+                const ys = data.map((d) => d.y);
+                let plotdata;
+                if (chartType === "pie") {
+                    plotdata = [{ labels: xs, values: ys, type: "pie" }];
+                } else {
+                    plotdata = [{ x: xs, y: ys, type: chartType }];
+                }
+                Plotly.newPlot(
+                    "chart",
+                    plotdata,
+                    { margin: { t: 20 } },
+                    { responsive: true },
+                );
+            }
+
+            async function runSql() {
+                const db = document.getElementById("sqlDb").value;
+                const query = document.getElementById("sqlText").value;
+                const r = await fetch("/api/sql", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ db, query }),
+                });
+                const j = await r.json();
+                const result = document.getElementById("sqlResult");
+                const metaBadge = document.getElementById("sqlMeta");
+
+                if (j.error) {
+                    metaBadge.textContent = "Error";
+                    result.innerHTML = `<div class="alert alert-danger mb-0">${j.error}</div>`;
+                    return;
+                }
+
+                if (j.mode === "command") {
+                    metaBadge.textContent = `${j.row_count} filas afectadas`;
+                    result.innerHTML = `<div class="alert alert-success mb-0">${j.message}</div>`;
+                    return;
+                }
+
+                metaBadge.textContent = `${j.row_count} filas devueltas`;
+                renderTable("sqlResult", j.rows || []);
+            }
+
+            document.addEventListener("DOMContentLoaded", async () => {
+                meta = await fetchMeta();
+
+                const dbLabels = Object.fromEntries(
+                    Object.entries(meta.databases).map(([k, v]) => [
+                        k,
+                        `${v.label} (${v.schema})`,
+                    ]),
+                );
+                fillSelect(
+                    document.getElementById("dbSelect"),
+                    Object.keys(meta.databases),
+                    dbLabels,
+                );
+                fillSelect(
+                    document.getElementById("sqlDb"),
+                    Object.keys(meta.databases),
+                    dbLabels,
+                );
+
+                loadTablesFor("dbSelect", "tableSelect");
+                await loadDashboardSchemaAndPreview();
+
+                document
+                    .getElementById("dbSelect")
+                    .addEventListener("change", async () => {
+                        loadTablesFor("dbSelect", "tableSelect");
+                        await loadDashboardSchemaAndPreview();
+                    });
+
+                document
+                    .getElementById("tableSelect")
+                    .addEventListener("change", loadDashboardSchemaAndPreview);
+                document
+                    .getElementById("renderBtn")
+                    .addEventListener("click", renderChart);
+                document
+                    .getElementById("runSql")
+                    .addEventListener("click", runSql);
+
+                document
+                    .getElementById("clearSql")
+                    .addEventListener("click", () => {
+                        document.getElementById("sqlText").value = "";
+                        document.getElementById("sqlResult").innerHTML = "";
+                        document.getElementById("sqlMeta").textContent = "";
+                    });
+
+                document
+                    .getElementById("presetQuery")
+                    .addEventListener("change", (e) => {
+                        if (e.target.value) {
+                            document.getElementById("sqlText").value =
+                                e.target.value;
+                        }
+                    });
+            });
+        </script>
+    </body>
+</html>
