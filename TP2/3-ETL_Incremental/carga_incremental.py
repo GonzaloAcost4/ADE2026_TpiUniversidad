@@ -164,7 +164,7 @@ def insert_ignore_dataframe(df: pd.DataFrame, tabla: str) -> int:
 
 def insertar_tiempo_incremental(fechas: Iterable[Optional[date]]) -> int:
     dim_tiempo, _ = base_etl.construir_dim_tiempo(fechas)
-    return insert_ignore_dataframe(dim_tiempo, "Tiempo")
+    return insert_ignore_dataframe(dim_tiempo, "dim_tiempo")
 
 
 def obtener_fila_actual(tabla: str, clave_natural: str, valor) -> Optional[Dict]:
@@ -215,73 +215,91 @@ def valores_cambiaron(
     return False
 
 
-def aplicar_scd2_alumno(dim_alumno_delta: pd.DataFrame) -> Dict[str, int]:
-    columnas_comparables = [
-        "dni",
-        "nombre",
-        "apellido",
+def actualizar_dimension_scd1(
+    tabla: str, sk_columna: str, sk_valor, registro: Dict, columnas_scd1: List[str]
+) -> None:
+    columnas_presentes = [columna for columna in columnas_scd1 if columna in registro]
+    if not columnas_presentes:
+        return
+
+    set_clause = ", ".join(
+        f"`{columna}` = :{columna}" for columna in columnas_presentes
+    )
+    query = text(f"UPDATE {tabla} SET {set_clause} WHERE {sk_columna} = :sk_valor")
+    parametros = {
+        columna: normalizar_valor_bd(registro[columna])
+        for columna in columnas_presentes
+    }
+    parametros["sk_valor"] = normalizar_valor_bd(sk_valor)
+
+    with base_etl.engine_dwh.begin() as conn:
+        conn.execute(query, parametros)
+
+
+def aplicar_scd_estudiante(dim_estudiante_delta: pd.DataFrame) -> Dict[str, int]:
+    columnas_scd2 = ["anio_plan_prog"]
+    columnas_scd1 = [
         "genero",
-        "fechaNacim",
-        "nacionalidad",
-        "añoIngreso",
-        "edadIngreso",
-        "nombrePrograma",
-        "tipoPrograma",
-        "duracionAñosPrograma",
+        "egreso_carrera",
+        "anio_egreso",
+        "abandono_carrera",
+        "anio_abandono",
     ]
-    return aplicar_scd2_generico(
-        df_delta=dim_alumno_delta,
-        tabla="Alumno",
-        clave_natural="idalumno",
-        sk_columna="alumnoSKey",
-        columnas_comparables=columnas_comparables,
+    return aplicar_scd_generico(
+        df_delta=dim_estudiante_delta,
+        tabla="dim_estudiante",
+        clave_natural="id_estudiante",
+        sk_columna="estudiante_skey",
+        columnas_scd2=columnas_scd2,
+        columnas_scd1=columnas_scd1,
     )
 
 
-def aplicar_scd2_dictado(dim_dictado_delta: pd.DataFrame) -> Dict[str, int]:
-    columnas_comparables = [
+def aplicar_scd_dictado(dim_dictado_delta: pd.DataFrame) -> Dict[str, int]:
+    columnas_scd2 = [
         "periodo",
         "turno",
-        "aula",
-        "cupoMax",
-        "codigoCurso",
-        "nombreCurso",
-        "horasTeoCurso",
-        "horasPracCurso",
-        "horasLabCurso",
-        "nivelCurso",
-        "nombreDocente",
-        "apellidoDocente",
-        "tituloDocente",
-        "categoriaDocente",
-        "dedicacionDocente",
-        "nombreDep",
-        "nombreFac",
-        "ciudadFac",
-        "provFac",
+        "horas_teoria",
+        "horas_practica",
+        "horas_lab",
+        "nivel_curso",
+        "nombre_docente",
+        "apellido_docente",
+        "titulo_docente",
+        "categoria_docente",
+        "dedicacion_docente",
     ]
-    return aplicar_scd2_generico(
+    columnas_scd1 = ["aula", "cupo_max", "nombre_curso"]
+    return aplicar_scd_generico(
         df_delta=dim_dictado_delta,
-        tabla="Dictado",
-        clave_natural="idDictado",
-        sk_columna="dictadoSKey",
-        columnas_comparables=columnas_comparables,
+        tabla="dim_dictado",
+        clave_natural="id_dictado",
+        sk_columna="dictado_skey",
+        columnas_scd2=columnas_scd2,
+        columnas_scd1=columnas_scd1,
     )
 
 
-def aplicar_scd2_generico(
+def aplicar_scd_generico(
     df_delta: pd.DataFrame,
     tabla: str,
     clave_natural: str,
     sk_columna: str,
-    columnas_comparables: List[str],
+    columnas_scd2: List[str],
+    columnas_scd1: List[str],
 ) -> Dict[str, int]:
     insertados = 0
-    actualizados = 0
+    actualizados_scd2 = 0
+    actualizados_scd1 = 0
     sin_cambios = 0
 
     if df_delta.empty:
-        return {"insertados": 0, "actualizados": 0, "sin_cambios": 0}
+        return {
+            "insertados": 0,
+            "actualizados_scd2": 0,
+            "actualizados_scd1": 0,
+            "sin_cambios": 0,
+        }
 
     for registro in dataframe_a_registros(df_delta):
         valor_clave = registro[clave_natural]
@@ -292,16 +310,22 @@ def aplicar_scd2_generico(
             insertados += insertar_dimension(registro_df, tabla)
             continue
 
-        if valores_cambiaron(fila_actual, registro, columnas_comparables):
+        if valores_cambiaron(fila_actual, registro, columnas_scd2):
             expirar_dimension(tabla, sk_columna, fila_actual[sk_columna])
             insertados += insertar_dimension(registro_df, tabla)
-            actualizados += 1
+            actualizados_scd2 += 1
+        elif valores_cambiaron(fila_actual, registro, columnas_scd1):
+            actualizar_dimension_scd1(
+                tabla, sk_columna, fila_actual[sk_columna], registro, columnas_scd1
+            )
+            actualizados_scd1 += 1
         else:
             sin_cambios += 1
 
     return {
         "insertados": insertados,
-        "actualizados": actualizados,
+        "actualizados_scd2": actualizados_scd2,
+        "actualizados_scd1": actualizados_scd1,
         "sin_cambios": sin_cambios,
     }
 
@@ -382,12 +406,12 @@ def procesar_incremental() -> Dict:
 
     tiempo_insertados = insertar_tiempo_incremental(fechas_tiempo)
 
-    dim_alumno_delta = pd.DataFrame()
+    dim_estudiante_delta = pd.DataFrame()
     if not deltas_limpios.get("estudiantes", pd.DataFrame()).empty:
-        dim_alumno_delta, _ = base_etl.construir_dim_alumno(
+        dim_estudiante_delta, _ = base_etl.construir_dim_estudiante(
             deltas_limpios["estudiantes"], lookups["programas"]
         )
-    scd_alumno = aplicar_scd2_alumno(dim_alumno_delta)
+    scd_estudiante = aplicar_scd_estudiante(dim_estudiante_delta)
 
     dim_dictado_delta = pd.DataFrame()
     if not deltas_limpios.get("dictados", pd.DataFrame()).empty:
@@ -398,22 +422,22 @@ def procesar_incremental() -> Dict:
             lookups["departamentos"],
             lookups["facultades"],
         )
-    scd_dictado = aplicar_scd2_dictado(dim_dictado_delta)
+    scd_dictado = aplicar_scd_dictado(dim_dictado_delta)
 
     print(
         f"  Tiempo insertados={tiempo_insertados} | "
-        f"Alumno nuevos={scd_alumno['insertados']} actualizados={scd_alumno['actualizados']} | "
-        f"Dictado nuevos={scd_dictado['insertados']} actualizados={scd_dictado['actualizados']}"
+        f"Estudiante nuevos={scd_estudiante['insertados']} scd2={scd_estudiante['actualizados_scd2']} scd1={scd_estudiante['actualizados_scd1']} | "
+        f"Dictado nuevos={scd_dictado['insertados']} scd2={scd_dictado['actualizados_scd2']} scd1={scd_dictado['actualizados_scd1']}"
     )
 
     print("[4/4] Insertando hechos incrementales...")
-    mapa_alumno = base_etl.obtener_mapa_alumno()
+    mapa_estudiante = base_etl.obtener_mapa_estudiante()
     mapa_dictado = base_etl.obtener_mapa_dictado()
     mapa_tiempo = base_etl.obtener_mapa_tiempo()
 
     hechos_insertados = {
         "fact_inscripcion": 0,
-        "fact_examen_alumno": 0,
+        "fact_examen_estudiante": 0,
         "fact_evaluacion_dictado": 0,
     }
 
@@ -421,7 +445,7 @@ def procesar_incremental() -> Dict:
         fact_inscripcion, _ = base_etl.construir_fact_inscripcion(
             deltas_limpios["inscripciones"],
             lookups["dictados"],
-            mapa_alumno,
+            mapa_estudiante,
             mapa_dictado,
             mapa_tiempo,
         )
@@ -439,15 +463,15 @@ def procesar_incremental() -> Dict:
             inscripciones_base, _ = base_etl.remapear_ids_estudiante(
                 inscripciones_base, mapa_ids_estudiante_duplicados
             )
-        fact_examen, _ = base_etl.construir_fact_examen_alumno(
+        fact_examen, _ = base_etl.construir_fact_examen_estudiante(
             deltas_limpios["examenes"],
             inscripciones_base,
-            mapa_alumno,
+            mapa_estudiante,
             mapa_dictado,
             mapa_tiempo,
         )
-        hechos_insertados["fact_examen_alumno"] = insert_ignore_dataframe(
-            fact_examen, "fact_examen_alumno"
+        hechos_insertados["fact_examen_estudiante"] = insert_ignore_dataframe(
+            fact_examen, "fact_examen_estudiante"
         )
 
     if not deltas_limpios.get("evaluaciones", pd.DataFrame()).empty:
@@ -460,7 +484,7 @@ def procesar_incremental() -> Dict:
 
     print(
         f"  fact_inscripcion={hechos_insertados['fact_inscripcion']} | "
-        f"fact_examen_alumno={hechos_insertados['fact_examen_alumno']} | "
+        f"fact_examen_estudiante={hechos_insertados['fact_examen_estudiante']} | "
         f"fact_evaluacion_dictado={hechos_insertados['fact_evaluacion_dictado']}"
     )
 
@@ -472,7 +496,7 @@ def procesar_incremental() -> Dict:
             "fecha_anterior": ultima,
             "registros_delta": total_delta,
             "tiempo_insertados": tiempo_insertados,
-            "scd_alumno": scd_alumno,
+            "scd_estudiante": scd_estudiante,
             "scd_dictado": scd_dictado,
             "hechos_insertados": hechos_insertados,
         }
@@ -485,7 +509,7 @@ def procesar_incremental() -> Dict:
     return {
         "registros_delta": total_delta,
         "tiempo_insertados": tiempo_insertados,
-        "scd_alumno": scd_alumno,
+        "scd_estudiante": scd_estudiante,
         "scd_dictado": scd_dictado,
         "hechos_insertados": hechos_insertados,
     }

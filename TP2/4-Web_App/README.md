@@ -1,70 +1,64 @@
-# Web App - Visualización del Data Warehouse y Staging
+# Web App - Exploración local de Staging y Data Warehouse
 
-Este directorio contiene una aplicación web sencilla (Flask) que permite:
+Esta aplicación Flask permite explorar localmente las bases `stg_universidad` y `dw_universidad` desde el navegador.
 
-- Ver tablas y datos de la *staging* y del *data warehouse*.
-- Generar gráficos (bar, pie, line) seleccionando tabla/columnas.
-- Ejecutar consultas SQL (solo SELECT) contra la base `stg_universidad` o `dw_universidad` y ver resultados.
+La app está alineada con el esquema actual del proyecto y no depende de listas hardcodeadas de tablas. Obtiene las tablas reales desde MySQL en tiempo de ejecución.
 
-Carpeta:
-- `app.py` : aplicación Flask
-- `templates/index.html` : HTML principal con las dos pestañas (Dashboard y SQL Explorer)
-- `static/` : carpeta para assets (vacía en esta versión)
+## Funcionalidades
 
-Requisitos
-----------
-Python 3.8+
-Paquetes (puedes instalarlos con pip):
+- listar tablas reales de staging y DWH
+- inspeccionar esquema de cualquier tabla
+- previsualizar registros
+- generar gráficos rápidos por tabla/columna
+- ejecutar consultas SQL complejas en entorno local
+- ejecutar CTE, `SHOW`, `EXPLAIN`, `SELECT` y también comandos SQL de mantenimiento si hace falta
 
-```
-pip install flask sqlalchemy pymysql python-dotenv pandas plotly
-```
+## Archivos
 
-Nota: `plotly` en el frontend se carga por CDN para graficar; la librería Python no es estrictamente necesaria para la parte visual.
+- `app.py`: backend Flask y endpoints API
+- `templates/index.html`: interfaz principal
 
-Variables de entorno
---------------------
-La aplicación lee conexión a bases desde el `.env` (mismo que usan los otros scripts):
+## Requisitos
 
-- DB_USER
-- DB_PASSWORD
-- DB_HOST
-- DB_PORT
-- STG_DATABASE
-- DWH_DATABASE
+La app usa las mismas variables de entorno que el resto del proyecto:
 
-Asegurate de tener un `.env` con esas variables o que estén en el entorno antes de arrancar.
+- `DB_USER`
+- `DB_PASSWORD`
+- `DB_HOST`
+- `DB_PORT`
+- `STG_DATABASE`
+- `DWH_DATABASE`
 
-Cómo ejecutar
--------------
-1. Posicionate en el directorio `TP2/4-Web_App`.
-2. Ejecutá:
+## Ejecución
 
-```
-python3 app.py
+Desde la raíz del repositorio o desde `TP2/4-Web_App`:
+
+```bash
+python TP2/4-Web_App/app.py
 ```
 
-3. Abrí tu navegador en `http://127.0.0.1:5000`
+Luego abrir:
 
-Pestañas de la aplicación
--------------------------
-- Dashboard: elegir base (stg/dwh), tabla, columnas X/Y y tipo de gráfico. Pulsar "Render" para ver el gráfico. Abajo verás un preview con hasta 50 filas.
+```text
+http://127.0.0.1:5000
+```
 
-- SQL Explorer: escribir una consulta SELECT (solo SELECT está permitida aquí por seguridad) y elegir la base. Al ejecutar verás la tabla de resultados.
+## Pestañas
 
-Seguridad
----------
-- La API de SQL solo permite `SELECT` para evitar modificaciones peligrosas desde la interfaz.
-- Aun así, esta app está pensada para uso local y diagnóstico; no la expongas en producción sin agregar autenticación y controles adicionales.
+### Dashboard
+Permite:
 
-Limitaciones y notas
---------------------
-- Las consultas grandes están limitadas por el `LIMIT` agregado si el usuario no especifica uno.
-- Los nombres de tablas usados por defecto en la UI están en la lista de `STG_TABLES` y `DWH_TABLES` del `app.py`. Si cambias las tablas en la BD, actualizá esas listas si hiciera falta.
+- elegir base (`stg` o `dwh`)
+- elegir tabla
+- inspeccionar columnas
+- ver preview de datos
+- generar gráficos simples
 
-Expansiones posibles
---------------------
-- Autenticación y roles (lectura/ejecución SQL restringida)
-- Guardado de consultas frecuentes
-- Más opciones de visualización (heatmaps, series temporales, etc.)
-- Paginado y descarga de resultados (CSV/Excel)
+### SQL Explorer
+Permite ejecutar SQL libre contra la base seleccionada.
+
+Está pensado para uso local del proyecto, por lo que no restringe las consultas a solo `SELECT`.
+
+## Nota operativa
+
+Si cambian tablas o estructuras del esquema, la app las toma automáticamente desde MySQL. No hace falta modificar listas manuales dentro del código para sincronizar nombres de tablas.

@@ -200,9 +200,7 @@ archivos_a_procesar = {
     "curso_programa.csv": "stg_curso_programa",
 }
 
-
 # In[4]:
-
 
 # ============================================
 # DIAGNÓSTICO PRE-CARGA

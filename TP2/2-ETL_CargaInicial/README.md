@@ -1,448 +1,315 @@
-# ETL de transformación y carga al Data Warehouse
+# ETL de carga inicial y transformación al Data Warehouse
 
-Este directorio contiene la etapa que transforma los datos cargados en `STG_Universidad` y los carga en el modelo dimensional de `dw_universidad`.
+Este directorio contiene la carga inicial del proyecto, desde los CSV de `TP2/Sources` hasta las tablas finales del Data Warehouse `dw_universidad`.
 
-El objetivo de esta etapa no es copiar las tablas staging tal como vienen, sino convertirlas en dimensiones y hechos consistentes con el esquema del Data Warehouse.
+La lógica vigente está implementada en:
 
-## Modelo destino
+- `carga_staging.py`
+- `transformacion.py`
 
-El script `transformacion.py` carga las tablas reales del DWH:
+Los notebooks:
 
-- Dimensiones:
-  - `dim_tiempo`
-  - `dim_estudiante`
-  - `dim_dictado`
-- Hechos:
-  - `fact_inscripcion`
-  - `fact_examen_estudiante`
-  - `fact_evaluacion_dictado`
+- `carga_staging.ipynb`
+- `transformacion.ipynb`
+
+están sincronizados con esos scripts y ejecutan directamente la misma lógica.
+
+---
+
+## Objetivo de esta etapa
+
+La carga inicial hace dos cosas:
+
+1. **cargar staging** con datos crudos y metadatos de auditoría
+2. **transformar y cargar el DWH** con datos limpios, normalizados y deduplicados
+
+No replica el modelo operacional completo en el DWH. En cambio, construye un modelo dimensional orientado a análisis.
+
+---
 
 ## Archivos principales
 
-- `carga_staging.py`: carga los CSV desde `TP2/Sources` hacia las tablas staging.
-- `transformacion.py`: limpia, normaliza, transforma y carga el DWH dimensional.
-- `logs/`: carpeta donde se guardan los logs de ejecución.
+- `carga_staging.py`: carga los CSV en staging
+- `transformacion.py`: transforma staging y carga el DWH
+- `carga_staging.ipynb`: wrapper sincronizado del script de carga
+- `transformacion.ipynb`: wrapper sincronizado del script de transformación
+- `logs/`: logs de ejecución
 
-## Cambio realizado sobre `stg_evaluacion_curso`
+---
 
-La tabla de hecho `fact_evaluacion_dictado` del DWH quedó definida a nivel:
+## Modelo destino
 
-- `dictado_skey`
-- `tiempo_skey`
-- `nota_dictado`
-- `nota_cont`
-- `nota_general`
+### Dimensiones
+- `dim_tiempo`
+- `dim_estudiante`
+- `dim_dictado`
 
-La fuente original `evaluacion_curso.csv` trae:
+### Hechos
+- `fact_inscripcion`
+- `fact_examen_estudiante`
+- `fact_evaluacion_dictado`
 
-- `id_evaluacion`
-- `id_dictado`
-- `puntaje_dictado`
-- `puntaje_contenido`
-- `valoracion_general`
+---
 
-Como el negocio no requiere identificar al estudiante que respondió la evaluación, en staging solo se agrega:
+## Staging
 
+Las tablas de staging almacenan:
+
+- valores crudos en columnas `_raw`
+- `archivo_origen`
+- `fecha_carga`
+
+Además existe una tabla de trazabilidad:
+
+- `stg_reg_repetidos`
+
+Esta tabla guarda:
+
+- `id_repetido`: `id_estudiante_raw` descartado
+- `id_tomado`: `id_estudiante_raw` canónico que se usa en la transformación
+
+La transformación usa `stg_reg_repetidos` como fuente de verdad para remapear inscripciones de alumnos duplicados.
+
+---
+
+## Carga a staging
+
+`carga_staging.py` realiza una carga full refresh por tabla:
+
+- ejecuta `TRUNCATE`
+- vuelve a cargar todo el CSV
+- agrega metadatos
+- conserva los campos crudos como texto
+
+### Enriquecimiento de `evaluacion_curso.csv`
+
+`evaluacion_curso.csv` no trae fecha de evaluación. Antes de insertarlo en staging, el proceso agrega `fecha_evaluacion`.
+
+La fecha se estima con esta regla:
+
+1. si el dictado tiene calendario académico:
+   - `C1` → `YYYY-07-15`
+   - `C2` → `YYYY-12-15`
+2. si no hay calendario, se usa la primera `fecha_inscripcion` del dictado + 90 días
+3. si no existe ninguna referencia temporal, el registro queda sin fecha y luego se rechaza en la transformación
+
+La tabla `stg_evaluacion_curso` queda a nivel:
+
+- `id_evaluacion_raw`
+- `id_dictado_raw`
 - `fecha_evaluacion_raw`
+- puntajes
 
-Ese campo permite resolver `tiempo_skey`, que sí es obligatorio en el DWH para este hecho.
+No se identifica al estudiante evaluador en este hecho.
 
-El cambio quedó incorporado directamente en:
+---
 
-- `TP2/1-ScriptCreacion_DB/CreacionSTG_Universidad.sql`
-- `TP2/1-ScriptCreacion_DB/CreacionDWH_Universidad.sql`
+## Limpieza y validación
 
-Si las tablas ya fueron creadas con la estructura anterior, hay que recrearlas antes de volver a ejecutar `carga_staging.py` y `transformacion.py`.
-
-## Enriquecimiento de `evaluacion_curso.csv`
-
-El CSV original no trae fecha de evaluación. Para poder cargar la tabla de hecho sin inventar una relación con estudiantes, `carga_staging.py` enriquece `evaluacion_curso.csv` solo con `fecha_evaluacion` antes de insertarlo en staging.
-
-La regla aplicada es:
-
-1. Se intenta estimar la fecha con el calendario académico del dictado.
-2. Si el período es `C1`, se usa `YYYY-07-15`.
-3. Si el período es `C2`, se usa `YYYY-12-15`.
-4. Si no se puede obtener el calendario del dictado, se usa como alternativa la primera `fecha_inscripcion` del dictado + 90 días.
-5. Si no existe ni calendario ni inscripciones para ese dictado, la evaluación queda sin fecha y luego se rechaza en transformación.
-
-Esta regla mantiene la granularidad real del dato: evaluación de dictado por fecha, no por estudiante.
-
-## Limpieza general de datos
-
-La limpieza se concentra en la clase `DataCleaner` de `transformacion.py`.
+La limpieza se concentra en `DataCleaner` dentro de `transformacion.py`.
 
 ### Strings
-
-Se consideran nulos los valores:
-
-- vacío
-- `null`
-- `none`
-- `n/a`
-- `na`
-- `sin dato`
-- `s/d`
-
-Además:
-
-- Se eliminan espacios al inicio y final.
-- Se colapsan espacios internos repetidos.
-- Se intenta reparar encoding solo cuando aparecen caracteres típicos de mojibake, como `Ã`, `Â` o `�`.
+- elimina espacios sobrantes
+- normaliza nulos textuales
+- intenta reparar mojibake evidente
 
 ### Números
-
-Se convierten valores numéricos desde texto.
-
-Reglas:
-
-- La coma decimal se reemplaza por punto.
-- Los espacios se eliminan.
-- Se aceptan enteros y decimales.
-- Si se pide entero y el valor trae decimales, se convierte a entero y se registra una advertencia.
-- Si no se puede convertir, el valor queda como nulo.
+- convierte enteros y flotantes desde texto
+- normaliza coma decimal
+- deja `NULL` cuando la conversión falla
 
 ### Fechas
-
-Se aceptan múltiples formatos:
-
-- `YYYY-MM-DD`
-- `DD/MM/YYYY`
-- `YYYYMMDD`
-- `DD-MM-YYYY`
-- `MM-DD-YYYY`
-- `YYYY`
-- `DD/MM/YY`
-- `YYYY/MM/DD`
-
-Si solo viene un año, se interpreta como `YYYY-01-01` cuando corresponde a año de ingreso.
+Acepta múltiples formatos comunes y devuelve `date` cuando puede resolverlos.
 
 ### Género
-
-Se normaliza a:
+Normaliza a:
 
 - `M`
 - `F`
 - `X`
 
-Ejemplos aceptados:
+---
 
-- `M`, `Masculino`, `Male`, `Hombre`, `1`
-- `F`, `Femenino`, `Female`, `Mujer`, `2`
-- `X`, `Otro`, `No binario`, `NB`
-
-Valores desconocidos quedan como nulos.
-
-## Criterios de validez por entidad staging
-
-Un registro se considera válido solo si cumple los campos mínimos necesarios para construir dimensiones o hechos. Si no cumple, se rechaza y no pasa a la siguiente etapa.
+## Reglas por entidad
 
 ### `stg_estudiante`
+Un estudiante es válido si tiene:
 
-Válido si tiene:
+- `id_estudiante`
+- `dni` válido
+- `apellido`
+- `nombre`
+- `id_programa`
 
-- `id_estudiante` no nulo
-- `dni` no nulo y dentro del rango argentino esperado, entre 1.000.000 y 99.999.999
-- `apellido` no nulo
-- `nombre` no nulo
-- `id_programa` no nulo
+La transformación:
 
-Se eliminan duplicados por:
+- elimina duplicados por `id_estudiante`
+- detecta duplicados por `dni`
+- elige un `id_estudiante` canónico
+- registra el mapeo en `stg_reg_repetidos`
 
-1. `id_estudiante`, conservando el primero.
-2. `dni`, conservando el primero.
+### `stg_programa`, `stg_facultad`, `stg_departamento`, `stg_docente`, `stg_curso`, `stg_dictado`
+Cada entidad exige sus claves mínimas y elimina duplicados por su identificador natural.
 
-Un estudiante sin programa no se carga porque no se puede construir correctamente la dimensión `Alumno` con atributos de programa.
-
-### `stg_programa`
-
-Válido si tiene:
-
-- `id_programa` no nulo
-- `nombre_programa` no nulo
-
-Se eliminan duplicados por `id_programa`, conservando el primero.
-
-### `stg_facultad`
-
-Válido si tiene:
-
-- `id_facultad` no nulo
-- `nombre_facultad` no nulo
-
-Se eliminan duplicados por `id_facultad`, conservando el primero.
-
-### `stg_departamento`
-
-Válido si tiene:
-
-- `id_departamento` no nulo
-- `nombre_departamento` no nulo
-
-Se eliminan duplicados por `id_departamento`, conservando el primero.
-
-### `stg_docente`
-
-Válido si tiene:
-
-- `id_docente` no nulo
-- `apellido_docente` no nulo
-- `nombre_docente` no nulo
-
-Se eliminan duplicados por `id_docente`, conservando el primero.
-
-### `stg_curso`
-
-Válido si tiene:
-
-- `id_curso` no nulo
-- `nombre_curso` no nulo
-
-Además:
-
-- Horas teóricas negativas pasan a nulo.
-- Horas prácticas negativas pasan a nulo.
-- Horas de laboratorio negativas pasan a nulo.
-- Nivel negativo pasa a nulo.
-
-Se eliminan duplicados por `id_curso`, conservando el primero.
-
-### `stg_dictado`
-
-Válido si tiene:
-
-- `id_dictado` no nulo
-- `id_curso` no nulo
-- `id_docente` no nulo
-
-Además:
-
-- `cupo_maximo` negativo pasa a nulo.
-
-Se eliminan duplicados por `id_dictado`, conservando el primero.
+En `stg_dictado` también se conserva `anio_academico`, porque forma parte de la lógica de inscripciones repetidas.
 
 ### `stg_inscripcion`
+Una inscripción es válida si tiene:
 
-Válido si tiene:
+- `id_inscripcion`
+- `id_estudiante`
+- `id_dictado`
+- `fecha_inscripcion`
 
-- `id_inscripcion` no nulo
-- `id_estudiante` no nulo
-- `id_dictado` no nulo
-- `fecha_inscripcion` válida
+El estado se normaliza a categorías consistentes como:
 
-La fecha es obligatoria porque se usa para resolver `tiempoSKey`.
-
-Se eliminan duplicados por `id_inscripcion`, conservando el primero.
-
-El estado se normaliza, por ejemplo:
-
-- `Activa`, `Activo`, `Inscripto`, `Cursando`, `Regular` pasan a `Activa`.
-- `Aprobada`, `Finalizada` pasan a `Aprobada`.
-- `Abandonada`, `Baja` pasan a `Abandonada`.
-- `Cancelada`, `Anulada`, `Rechazada` pasan a `Cancelada`.
+- `Activa`
+- `Aprobada`
+- `Abandonada`
+- `Cancelada`
 
 ### `stg_examen`
+Un examen es válido si tiene:
 
-Válido si tiene:
-
-- `id_examen` no nulo
-- `id_inscripcion` no nulo
-- `fecha` válida
+- `id_examen`
+- `id_inscripcion`
+- `fecha`
 - `nota` entre 0 y 10
-- `numero_intento` no nulo y mayor a 0
-
-Se eliminan duplicados por `id_examen`, conservando el primero.
-
-El resultado se convierte a booleano:
-
-- Aprobado, sí, true, 1 pasan a `True`.
-- Desaprobado, no, false, 0, ausente o pendiente pasan a `False`.
-- Si no hay texto de resultado, se infiere aprobado cuando `nota >= 4`.
+- `numero_intento` mayor a 0
 
 ### `stg_evaluacion_curso`
+Una evaluación es válida si tiene:
 
-Válido si tiene:
-
-- `id_evaluacion` no nulo
-- `id_dictado` no nulo
-- `fecha_evaluacion` válida
+- `id_evaluacion`
+- `id_dictado`
+- `fecha_evaluacion`
 - `puntaje_dictado` entre 0 y 10
 - `puntaje_contenido` entre 0 y 10
 - `valoracion_general` entre 0 y 10
 
-Se eliminan duplicados por `id_evaluacion`, conservando el primero.
-
-Si `fecha_evaluacion_raw` no existe en staging, los registros quedan inválidos para `EvaluacionDictado`, porque no se puede resolver `tiempoSKey`.
+---
 
 ## Construcción de dimensiones
 
-### Dimensión `Tiempo`
+### `dim_tiempo`
+Se construye a partir de las fechas usadas por los hechos:
 
-Se construye desde las fechas usadas por hechos:
+- inscripciones
+- exámenes
+- evaluaciones
 
-- `fecha_inscripcion`
-- `fecha de examen`
-- `fecha_evaluacion`
+Incluye:
 
-El `tiempoSKey` se calcula como `YYYYMMDD`.
-
-Ejemplo:
-
-- `2024-07-15` produce `20240715`.
-
-También se cargan:
-
+- `tiempo_skey`
+- fecha
 - día
 - mes en español
 - año
 - período académico
-- marca de feriado, actualmente `False`
 
-### Dimensión `Alumno`
+### `dim_estudiante`
+Se construye con estudiantes y programas.
 
-Se construye con datos de estudiantes y programas.
+Incluye:
 
-Origen:
+- datos personales
+- atributos del programa
+- cálculo de edad de ingreso
+- vigencia tipo SCD
 
-- `stg_estudiante`
-- `stg_programa`
+### `dim_dictado`
+Se construye denormalizando:
 
-Se cargan datos personales del alumno y atributos del programa:
+- dictado
+- curso
+- docente
+- departamento
+- facultad
 
-- nombre del programa
-- tipo de programa
-- duración del programa
-
-También se calculan:
-
-- `edadIngreso`
-- `valid_from`
-- `valid_to`
-- `es_actual`
-
-### Dimensión `Dictado`
-
-Se construye denormalizando datos de:
-
-- `stg_dictado`
-- `stg_curso`
-- `stg_docente`
-- `stg_departamento`
-- `stg_facultad`
-
-La tabla resultante contiene datos completos del dictado, curso, docente, departamento y facultad.
+---
 
 ## Construcción de hechos
 
-### Hecho `Inscripcion`
-
-Se construye desde `stg_inscripcion`.
-
-Transformaciones clave:
-
-- `id_estudiante` se convierte a `alumnoSKey`.
-- `id_dictado` se convierte a `dictadoSKey`.
-- `fecha_inscripcion` se convierte a `tiempoSKey`.
-
-Solo se carga si las tres surrogate keys existen.
-
-Duplicados eliminados por:
-
-- `alumnoSKey`
-- `dictadoSKey`
-
-Se conserva el último registro.
-
-### Hecho `ExamenAlumno`
-
-Se construye desde `stg_examen` más `stg_inscripcion`.
-
-Primero se une examen con inscripción por `id_inscripcion`, para saber qué alumno y dictado corresponden al examen.
-
-Luego se resuelven:
-
-- `alumnoSKey`
-- `dictadoSKey`
-- `tiempoSKey`
-
-Solo se carga si las tres surrogate keys existen.
-
-Duplicados eliminados por:
-
-- `alumnoSKey`
-- `dictadoSKey`
-- `nroIntentos`
-
-Se conserva el último registro, ordenado por fecha e `id_examen`.
-
-### Hecho `EvaluacionDictado`
-
-Se construye desde `stg_evaluacion_curso` enriquecida.
+### `fact_inscripcion`
+Se construye desde `stg_inscripcion`, remapeando previamente alumnos duplicados según `stg_reg_repetidos`.
 
 Transformaciones clave:
 
-- `id_dictado` se convierte a `dictadoSKey`.
-- `fecha_evaluacion` se convierte a `tiempoSKey`.
-- `puntaje_dictado` se carga como `notaDictado`.
-- `puntaje_contenido` se carga como `notaCont`.
-- `valoracion_general` se carga como `notaGeneral`.
+- `id_estudiante` → `estudiante_skey`
+- `id_dictado` → `dictado_skey`
+- `fecha_inscripcion` → `tiempo_skey`
 
-Solo se carga si ambas surrogate keys existen.
+Regla de consolidación:
 
-Duplicados eliminados por:
+si un alumno canónico aparece inscripto más de una vez en el mismo:
 
-- `dictadoSKey`
-- `tiempoSKey`
+- curso
+- año académico
 
-Se conserva el último registro, ordenado por fecha e `id_evaluacion`.
+se conserva una sola inscripción en el hecho.
 
-## Cuándo se elimina un registro
+Si la materia reaparece en otro año académico, se conserva como una recursada válida.
 
-Un registro puede no llegar al DWH por tres motivos principales:
+### `fact_examen_estudiante`
+Se construye uniendo examen con inscripción para obtener:
 
-1. Rechazo en limpieza staging.
-   - Falta una clave obligatoria.
-   - Una fecha requerida no se puede parsear.
-   - Una nota o puntaje está fuera de rango.
-   - Un DNI no cumple rango válido.
+- estudiante
+- dictado
+- fecha
 
-2. Eliminación por duplicado.
-   - El registro es repetido según la clave natural definida para esa entidad.
-   - Se conserva el primero o el último según el caso.
+Se deduplica por:
 
-3. Rechazo en construcción de hechos.
-   - El registro era limpio, pero no se puede resolver una surrogate key.
-   - Ejemplo: una inscripción con `id_estudiante` que no existe en `Alumno`.
-   - Ejemplo: una evaluación con `id_dictado` que no existe en `Dictado`.
-   - Ejemplo: una fecha que no existe en `Tiempo`.
+- `estudiante_skey`
+- `dictado_skey`
+- `n_intentos`
+
+### `fact_evaluacion_dictado`
+Se construye a nivel:
+
+- `dictado_skey`
+- `tiempo_skey`
+
+Incluye:
+
+- `nota_dictado`
+- `nota_cont`
+- `nota_general`
+
+Se deduplica por:
+
+- `dictado_skey`
+- `tiempo_skey`
+
+---
 
 ## Orden de ejecución recomendado
 
-1. Crear o recrear staging con `CreacionSTG_Universidad.sql` para asegurar que `stg_evaluacion_curso` tenga `fecha_evaluacion_raw`.
-2. Crear o recrear el DWH con `CreacionDWH_Universidad.sql`.
-3. Ejecutar `carga_staging.py`.
-4. Ejecutar `transformacion.py`.
+1. crear o recrear las bases con los scripts SQL
+2. ejecutar `carga_staging.py`
+3. ejecutar `transformacion.py`
+4. validar tablas de staging, trazabilidad y DWH
 
-## Salida de consola
+---
 
-La salida de `transformacion.py` fue reducida para mostrar solo información importante:
+## Salida y monitoreo
 
-- etapa actual
-- tablas DWH cargadas
-- cantidad de registros transformados
-- cantidad insertada
-- errores
-- cantidad final en DWH
-- alertas cuando hay rechazados o duplicados
+La consola muestra información resumida de:
 
-El detalle completo queda en los archivos de log dentro de `logs/`.
+- etapas ejecutadas
+- registros rechazados
+- duplicados detectados
+- registros insertados
+- cantidad final por tabla
 
-## Consideraciones importantes
+El detalle completo queda en los logs del proceso.
 
-- La carga del DWH es full refresh: se vacían las tablas antes de cargar.
-- Se desactivan temporalmente los checks de foreign keys durante el truncate controlado.
-- Las dimensiones se cargan antes que los hechos.
-- Las surrogate keys se obtienen después de cargar dimensiones.
-- Los hechos no usan IDs naturales; usan surrogate keys del DWH.
-- No se inventan surrogate keys inexistentes.
-- Si un dato no puede relacionarse con una dimensión, se rechaza en el hecho.
+---
+
+## Consideraciones operativas
+
+- la carga del DWH es full refresh
+- las dimensiones se cargan antes que los hechos
+- las surrogate keys se obtienen después de cargar las dimensiones
+- los hechos solo se insertan cuando pueden resolverse las claves necesarias
+- `stg_reg_repetidos` centraliza la trazabilidad de alumnos duplicados
+- la evaluación de dictado no usa estudiante como dimensión de análisis
