@@ -48,8 +48,6 @@ La **Fase 3: Carga Incremental** se ejecutará periódicamente (diaria, semanal,
 ├── carga_incremental.py          # Procesar e insertar cambios
 ├── logs/                         # Logs de ejecución
 │   └── carga_incremental_*.log
-├── datos_control/                # Archivos de control
-│   └── ultima_extraccion.json    # Timestamp última extracción
 └── README.md                     # Este archivo
 ```
 
@@ -130,7 +128,7 @@ def detectar_cambios_checksum(df_anterior, df_actual):
 #### Inputs:
 
 - Conexión a OLTP (base de datos transaccional)
-- Archivo de control: `ultima_extraccion.json` con timestamp/fecha
+- Tabla de auditoria en STG: `etl_auditoria_incremental`
 - Archivos CSV delta opcionales
 
 #### Outputs:
@@ -138,7 +136,7 @@ def detectar_cambios_checksum(df_anterior, df_actual):
 - DataFrame de registros **nuevos**
 - DataFrame de registros **modificados**
 - Archivo de log: qué registros fueron detectados
-- Actualizar archivo de control con nueva fecha
+- Actualizar tabla de auditoria con nueva marca de agua
 
 #### Pseudocódigo:
 
@@ -152,10 +150,9 @@ from datetime import datetime
 
 logger = LoggerManager.configurar("detectar_cambios", os.getcwd(), 'logs')
 
-# 1. Cargar timestamp de última extracción
-with open('datos_control/ultima_extraccion.json', 'r') as f:
-    datos_control = json.load(f)
-    ultima_fecha = datos_control['fecha_ultima_extraccion']
+# 1. Cargar timestamp de última extracción desde auditoria
+query = "SELECT nueva_extraccion FROM etl_auditoria_incremental WHERE estado='OK' ORDER BY id DESC LIMIT 1"
+ultima_fecha = pd.read_sql(query, engine_stg).iloc[0, 0]
 
 logger.info(f"Última extracción: {ultima_fecha}")
 
@@ -172,14 +169,9 @@ for tabla in TABLAS_A_MONITOREAR:
     else:
         logger.info(f"Tabla {tabla}: Sin cambios")
 
-# 3. Actualizar archivo de control
-datos_control['fecha_ultima_extraccion'] = datetime.now().isoformat()
-datos_control['cambios_detectados'] = sum(len(df) for df in cambios_detectados.values())
-
-with open('datos_control/ultima_extraccion.json', 'w') as f:
-    json.dump(datos_control, f, indent=2)
-
-logger.info(f"Total de cambios detectados: {datos_control['cambios_detectados']}")
+# 3. Actualizar auditoria
+total_cambios = sum(len(df) for df in cambios_detectados.values())
+logger.info(f"Total de cambios detectados: {total_cambios}")
 ```
 
 ### ✅ Checklist
@@ -187,7 +179,7 @@ logger.info(f"Total de cambios detectados: {datos_control['cambios_detectados']}
 - [ ] Identificar fuentes de datos (OLTP, archivos, APIs)
 - [ ] Implementar detección por timestamp
 - [ ] Implementar detección por checksum (backup)
-- [ ] Crear archivo de control `ultima_extraccion.json`
+- [ ] Crear tabla de auditoria `etl_auditoria_incremental`
 - [ ] Logging de cambios detectados
 - [ ] Manejo de tablas sin cambios
 - [ ] Probar detección
@@ -224,6 +216,35 @@ Luego reescribe `numero_intento` antes de insertar/actualizar el hecho.
 
 Estas dos decisiones evitan la falsificacion de fechas y la corrupcion de
 historicos cuando existen reintentos o correcciones en el origen.
+
+### 3) Auditoria en BD y deteccion de duplicados en SQL
+
+La marca de agua se guarda en la tabla `etl_auditoria_incremental` para evitar
+inconsistencias por fallos entre escritura del DWH y archivos locales. La
+deteccion de duplicados se hace con `INSERT ... SELECT` en SQL para evitar
+consumir memoria en pandas.
+
+---
+
+## 🧪 Verificacion rapida (SQL)
+
+Consultar ultimas ejecuciones:
+
+```sql
+SELECT id, inicio, fin, ultima_extraccion, nueva_extraccion, estado, registros_delta
+FROM etl_auditoria_incremental
+ORDER BY id DESC
+LIMIT 10;
+```
+
+Validar que la ultima ejecucion quedo OK:
+
+```sql
+SELECT estado, registros_delta, mensaje_error
+FROM etl_auditoria_incremental
+ORDER BY id DESC
+LIMIT 1;
+```
 
 ### 🔄 Estrategias de Dimensiones Lentamente Cambiantes
 

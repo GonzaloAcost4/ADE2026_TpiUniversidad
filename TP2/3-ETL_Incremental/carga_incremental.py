@@ -17,7 +17,6 @@ La transformación se reutiliza desde `TP2/2-ETL_CargaInicial/transformacion.py`
 para mantener los mismos criterios de limpieza, normalización y validez.
 """
 
-import json
 import os
 import sys
 from datetime import date, datetime, timezone
@@ -49,9 +48,7 @@ logger = LoggerManager.configurar(
     carpeta_logs="logs",
 )
 
-CONTROL_DIR = SCRIPT_DIR / "datos_control"
-CONTROL_DIR.mkdir(exist_ok=True)
-CONTROL_FILE = CONTROL_DIR / "ultima_extraccion.json"
+AUDITORIA_TABLE = "etl_auditoria_incremental"
 
 LIMITE_DELTA_INICIAL = int(os.getenv("LIMITE_DELTA_INICIAL", "1000"))
 
@@ -82,20 +79,88 @@ TRANSFORMACIONES_BASE = {
 }
 
 
-def cargar_control() -> Dict:
-    if not CONTROL_FILE.exists():
-        return {
-            "fecha_ultima_extraccion": None,
-            "ejecuciones": [],
-        }
+def asegurar_tabla_auditoria() -> None:
+    """
+    Caja blanca: crea la tabla de auditoria si no existe.
+    Mantiene la marca de agua en la BD para evitar inconsistencias
+    por fallos entre escritura del DWH y archivos locales.
+    """
+    query = text(
+        f"""
+        CREATE TABLE IF NOT EXISTS {AUDITORIA_TABLE} (
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            inicio DATETIME NOT NULL,
+            fin DATETIME NULL,
+            ultima_extraccion DATETIME NULL,
+            nueva_extraccion DATETIME NULL,
+            estado VARCHAR(20) NOT NULL,
+            registros_delta INT DEFAULT 0,
+            mensaje_error TEXT NULL
+        ) ENGINE=InnoDB
+        """
+    )
+    with base_etl.engine_stg.begin() as conn:
+        conn.execute(query)
 
-    with CONTROL_FILE.open("r", encoding="utf-8") as archivo:
-        return json.load(archivo)
+
+def obtener_ultima_extraccion() -> Optional[str]:
+    """
+    Caja blanca: obtiene la ultima marca de agua exitosa desde auditoria.
+    """
+    asegurar_tabla_auditoria()
+    query = text(
+        f"SELECT nueva_extraccion FROM {AUDITORIA_TABLE} "
+        "WHERE estado = 'OK' ORDER BY id DESC LIMIT 1"
+    )
+    with base_etl.engine_stg.connect() as conn:
+        valor = conn.execute(query).scalar()
+    return valor.isoformat() if valor else None
 
 
-def guardar_control(control: Dict) -> None:
-    with CONTROL_FILE.open("w", encoding="utf-8") as archivo:
-        json.dump(control, archivo, indent=2, ensure_ascii=False, default=str)
+def registrar_inicio_ejecucion(ultima_extraccion: Optional[str]) -> int:
+    """
+    Caja blanca: registra el inicio de la ejecucion incremental en auditoria.
+    """
+    asegurar_tabla_auditoria()
+    query = text(
+        f"INSERT INTO {AUDITORIA_TABLE} "
+        "(inicio, ultima_extraccion, estado) VALUES (:inicio, :ultima, 'RUNNING')"
+    )
+    with base_etl.engine_stg.begin() as conn:
+        result = conn.execute(
+            query, {"inicio": datetime.now(timezone.utc), "ultima": ultima_extraccion}
+        )
+        return int(result.lastrowid)
+
+
+def registrar_fin_ejecucion(
+    ejecucion_id: int,
+    nueva_extraccion: str,
+    registros_delta: int,
+    estado: str,
+    mensaje_error: Optional[str] = None,
+) -> None:
+    """
+    Caja blanca: cierra la ejecucion incremental en auditoria.
+    """
+    query = text(
+        f"UPDATE {AUDITORIA_TABLE} "
+        "SET fin = :fin, nueva_extraccion = :nueva, registros_delta = :delta, "
+        "estado = :estado, mensaje_error = :error "
+        "WHERE id = :id"
+    )
+    with base_etl.engine_stg.begin() as conn:
+        conn.execute(
+            query,
+            {
+                "fin": datetime.now(timezone.utc),
+                "nueva": nueva_extraccion,
+                "delta": registros_delta,
+                "estado": estado,
+                "error": mensaje_error,
+                "id": ejecucion_id,
+            },
+        )
 
 
 def leer_delta_staging(tabla: str, ultima_extraccion: Optional[str]) -> pd.DataFrame:
@@ -124,9 +189,7 @@ def limpiar_delta(clave: str, df_raw: pd.DataFrame) -> Tuple[pd.DataFrame, Dict]
     return funcion(df_raw)
 
 
-def actualizar_mapeos_duplicados(
-    deltas_raw: Dict[str, pd.DataFrame]
-) -> Tuple[Dict[int, int], Dict[int, int]]:
+def actualizar_mapeos_duplicados() -> Tuple[Dict[int, int], Dict[int, int]]:
     """
     Caja blanca: detección ACTIVA de duplicados en cada corrida incremental.
 
@@ -135,51 +198,88 @@ def actualizar_mapeos_duplicados(
     - Recalcular y persistir mapas de duplicados con datos completos + delta.
 
     Estrategia:
-    1) Unimos staging completo con el delta actual (si existe) para asegurar
-       que los duplicados nuevos queden visibles aunque el delta sea parcial.
-    2) Construimos y persistimos la tabla `stg_estudiantes_repetidos`.
-    3) Limpiamos inscripciones, remapeamos por estudiantes canónicos y
-       construimos/persistimos `stg_inscripciones_repetidas`.
-    4) Devolvemos ambos mapas para remapeos posteriores.
+    1) Detectar duplicados por DNI directamente en SQL y persistir.
+    2) Detectar duplicados de inscripcion remapeando IDs en SQL y persistir.
+    3) Leer mapas desde STG para remapeos posteriores.
     """
-    # 1) Estudiantes: preparar dataset mínimo para detección de duplicados.
-    est_full = leer_staging_completo("stg_estudiante")
-    est_delta = deltas_raw.get("estudiantes", pd.DataFrame())
-    est_union = (
-        pd.concat([est_full, est_delta], ignore_index=True, sort=False)
-        if not est_delta.empty
-        else est_full
+    query_estudiantes_trunc = text("TRUNCATE TABLE stg_estudiantes_repetidos")
+    query_estudiantes_insert = text(
+        """
+        INSERT INTO stg_estudiantes_repetidos (archivo_origen, id_repetido, id_tomado)
+        SELECT b.archivo_origen,
+               b.id_estudiante AS id_repetido,
+               t.id_tomado
+        FROM (
+            SELECT
+                se.archivo_origen,
+                CAST(se.id_estudiante_raw AS SIGNED) AS id_estudiante,
+                CAST(se.dni_raw AS SIGNED) AS dni
+            FROM stg_estudiante se
+            WHERE se.id_estudiante_raw REGEXP '^[0-9]+$'
+              AND se.dni_raw REGEXP '^[0-9]+$'
+              AND CAST(se.dni_raw AS SIGNED) BETWEEN 1000000 AND 99999999
+        ) b
+        JOIN (
+            SELECT dni, MIN(id_estudiante) AS id_tomado
+            FROM (
+                SELECT
+                    CAST(se.dni_raw AS SIGNED) AS dni,
+                    CAST(se.id_estudiante_raw AS SIGNED) AS id_estudiante
+                FROM stg_estudiante se
+                WHERE se.id_estudiante_raw REGEXP '^[0-9]+$'
+                  AND se.dni_raw REGEXP '^[0-9]+$'
+                  AND CAST(se.dni_raw AS SIGNED) BETWEEN 1000000 AND 99999999
+            ) x
+            GROUP BY dni
+        ) t ON b.dni = t.dni
+        WHERE b.id_estudiante <> t.id_tomado
+        """
     )
 
-    estudiantes_mapeo = base_etl.preparar_estudiantes_para_mapeo_duplicados(est_union)
-    dup_est = base_etl.construir_mapeo_estudiantes_duplicados(estudiantes_mapeo)
-    base_etl.persistir_registros_estudiantes_duplicados(dup_est)
+    base_inscripciones = """
+        SELECT
+            si.archivo_origen,
+            CAST(si.id_inscripcion_raw AS SIGNED) AS id_inscripcion,
+            COALESCE(CAST(sr.id_tomado AS SIGNED), CAST(si.id_estudiante_raw AS SIGNED)) AS id_estudiante_canon,
+            CAST(si.id_dictado_raw AS SIGNED) AS id_dictado
+        FROM stg_inscripcion si
+        LEFT JOIN stg_estudiantes_repetidos sr
+            ON CAST(si.id_estudiante_raw AS SIGNED) = CAST(sr.id_repetido AS SIGNED)
+        WHERE si.id_inscripcion_raw REGEXP '^[0-9]+$'
+          AND si.id_estudiante_raw REGEXP '^[0-9]+$'
+          AND si.id_dictado_raw REGEXP '^[0-9]+$'
+    """
+
+    query_inscripciones_trunc = text("TRUNCATE TABLE stg_inscripciones_repetidas")
+    query_inscripciones_insert = text(
+        f"""
+        INSERT INTO stg_inscripciones_repetidas (archivo_origen, id_repetido, id_tomado)
+        SELECT b.archivo_origen,
+               b.id_inscripcion AS id_repetido,
+               t.id_tomado
+        FROM (
+            {base_inscripciones}
+        ) b
+        JOIN (
+            SELECT id_estudiante_canon, id_dictado, MIN(id_inscripcion) AS id_tomado
+            FROM (
+                {base_inscripciones}
+            ) x
+            GROUP BY id_estudiante_canon, id_dictado
+        ) t
+        ON b.id_estudiante_canon = t.id_estudiante_canon
+       AND b.id_dictado = t.id_dictado
+        WHERE b.id_inscripcion <> t.id_tomado
+        """
+    )
+
+    with base_etl.engine_stg.begin() as conn:
+        conn.execute(query_estudiantes_trunc)
+        conn.execute(query_estudiantes_insert)
+        conn.execute(query_inscripciones_trunc)
+        conn.execute(query_inscripciones_insert)
+
     mapa_estudiantes_dup = base_etl.obtener_mapa_estudiantes_duplicados()
-
-    # 2) Inscripciones: limpiar staging completo y remapear id_estudiante.
-    ins_full = leer_staging_completo("stg_inscripcion")
-    ins_delta = deltas_raw.get("inscripciones", pd.DataFrame())
-    ins_union = (
-        pd.concat([ins_full, ins_delta], ignore_index=True, sort=False)
-        if not ins_delta.empty
-        else ins_full
-    )
-    ins_limpio, _ = base_etl.transformar_inscripcion_base(ins_union)
-    if mapa_estudiantes_dup:
-        ins_limpio, _ = base_etl.remapear_ids(
-            ins_limpio,
-            mapa_estudiantes_dup,
-            "id_estudiante",
-            etiqueta="inscripciones.id_estudiante",
-        )
-
-    # 3) Inscripciones duplicadas: solo para estudiantes canónicos duplicados.
-    canonicos = set(mapa_estudiantes_dup.values()) if mapa_estudiantes_dup else set()
-    dup_ins = base_etl.construir_mapeo_inscripciones_duplicadas(
-        ins_limpio,
-        estudiantes_canonicos_duplicados=canonicos,
-    )
-    base_etl.persistir_registros_inscripciones_duplicadas(dup_ins)
     mapa_inscripciones_dup = base_etl.obtener_mapa_inscripciones_duplicadas()
 
     return mapa_estudiantes_dup or {}, mapa_inscripciones_dup or {}
@@ -355,7 +455,7 @@ def aplicar_scd_estudiante(dim_estudiante_delta: pd.DataFrame) -> Dict[str, int]
     return aplicar_scd_generico(
         df_delta=dim_estudiante_delta,
         tabla="dim_estudiante",
-        clave_natural="id_estudiante",
+        clave_natural="idalumno",
         sk_columna="estudiante_skey",
         columnas_scd2=columnas_scd2,
         columnas_scd1=columnas_scd1,
@@ -380,7 +480,7 @@ def aplicar_scd_dictado(dim_dictado_delta: pd.DataFrame) -> Dict[str, int]:
     return aplicar_scd_generico(
         df_delta=dim_dictado_delta,
         tabla="dim_dictado",
-        clave_natural="id_dictado",
+        clave_natural="idDictado",
         sk_columna="dictado_skey",
         columnas_scd2=columnas_scd2,
         columnas_scd1=columnas_scd1,
@@ -569,221 +669,217 @@ def procesar_incremental() -> Dict:
     Caja blanca: orquesta la carga incremental por delta.
     1) Detecta cambios por fecha_carga.
     2) Limpia y normaliza con la misma lógica del ETL base.
-    3) Aplica trazabilidad leyendo mapas persistidos de duplicados.
+    3) Recalcula trazabilidad en SQL y lee mapas persistidos de duplicados.
     4) Actualiza dimensiones con SCD1/SCD2.
     5) Inserta hechos con INSERT IGNORE y consolida exámenes cuando aplica.
     """
     print("\n=== Carga incremental simulada STG -> DWH ===")
-    control = cargar_control()
-    ultima = control.get("fecha_ultima_extraccion")
+    ultima = obtener_ultima_extraccion()
     inicio_ejecucion = datetime.now(timezone.utc).isoformat()
+    ejecucion_id = registrar_inicio_ejecucion(ultima)
 
-    print(f"Última extracción registrada: {ultima or 'sin registro previo'}")
+    try:
+        print(f"Última extracción registrada: {ultima or 'sin registro previo'}")
 
-    deltas_raw: Dict[str, pd.DataFrame] = {}
-    deltas_limpios: Dict[str, pd.DataFrame] = {}
-    stats_limpieza: Dict[str, Dict] = {}
+        deltas_raw: Dict[str, pd.DataFrame] = {}
+        deltas_limpios: Dict[str, pd.DataFrame] = {}
+        stats_limpieza: Dict[str, Dict] = {}
 
-    print("[1/4] Detectando deltas en staging...")
-    for clave, tabla in TABLAS_STAGING.items():
-        df_delta = leer_delta_staging(tabla, ultima)
-        deltas_raw[clave] = df_delta
-        if not df_delta.empty:
-            print(f"  {tabla}: {len(df_delta)} registros delta")
+        print("[1/4] Detectando deltas en staging...")
+        for clave, tabla in TABLAS_STAGING.items():
+            df_delta = leer_delta_staging(tabla, ultima)
+            deltas_raw[clave] = df_delta
+            if not df_delta.empty:
+                print(f"  {tabla}: {len(df_delta)} registros delta")
 
-    if all(df.empty for df in deltas_raw.values()):
-        print("No se detectaron cambios para procesar.")
-        control["fecha_ultima_extraccion"] = inicio_ejecucion
-        control["ejecuciones"].append({"fecha": inicio_ejecucion, "cambios": 0})
-        guardar_control(control)
-        return {"cambios": 0}
+        if all(df.empty for df in deltas_raw.values()):
+            print("No se detectaron cambios para procesar.")
+            registrar_fin_ejecucion(ejecucion_id, inicio_ejecucion, 0, "OK")
+            return {"cambios": 0}
 
-    print("[2/4] Limpiando y normalizando deltas...")
-    for clave, df_raw in deltas_raw.items():
-        if df_raw.empty:
-            deltas_limpios[clave] = pd.DataFrame()
-            continue
-        deltas_limpios[clave], stats = limpiar_delta(clave, df_raw)
-        stats_limpieza[clave] = stats
-        if stats["rechazados"] > 0 or stats["duplicados"] > 0:
-            print(
-                f"  Atención {TABLAS_STAGING[clave]}: rechazados={stats['rechazados']} | duplicados={stats['duplicados']}"
-            )
-
-    # Paso de trazabilidad ACTIVA: recalcula mapas de duplicados con datos completos.
-    mapa_estudiantes_dup, mapa_inscripciones_dup = actualizar_mapeos_duplicados(deltas_raw)
-
-    # Remapeo inmediato del delta de inscripciones para mantener coherencia en hechos.
-    if mapa_estudiantes_dup and not deltas_limpios.get("inscripciones", pd.DataFrame()).empty:
-        deltas_limpios["inscripciones"], _ = base_etl.remapear_ids(
-            deltas_limpios["inscripciones"],
-            mapa_estudiantes_dup,
-            "id_estudiante",
-            etiqueta="inscripciones.id_estudiante",
-        )
-
-    lookups = construir_lookups_completos()
-
-    print("[3/4] Aplicando dimensiones incrementales...")
-    fechas_tiempo = []
-    if not deltas_limpios.get("inscripciones", pd.DataFrame()).empty:
-        fechas_tiempo.extend(
-            deltas_limpios["inscripciones"]["fecha_inscripcion"].tolist()
-        )
-    if not deltas_limpios.get("examenes", pd.DataFrame()).empty:
-        fechas_tiempo.extend(deltas_limpios["examenes"]["fecha"].tolist())
-    if not deltas_limpios.get("evaluaciones", pd.DataFrame()).empty:
-        fechas_tiempo.extend(
-            deltas_limpios["evaluaciones"]["fecha_evaluacion"].tolist()
-        )
-
-    tiempo_insertados = insertar_tiempo_incremental(fechas_tiempo)
-
-    dim_estudiante_delta = pd.DataFrame()
-    if not deltas_limpios.get("estudiantes", pd.DataFrame()).empty:
-        dim_estudiante_delta, _ = base_etl.construir_dim_estudiante(
-            deltas_limpios["estudiantes"], lookups["programas"]
-        )
-    scd_estudiante = aplicar_scd_estudiante(dim_estudiante_delta)
-
-    dim_dictado_delta = pd.DataFrame()
-    if not deltas_limpios.get("dictados", pd.DataFrame()).empty:
-        dim_dictado_delta, _ = base_etl.construir_dim_dictado(
-            deltas_limpios["dictados"],
-            lookups["cursos"],
-            lookups["docentes"],
-            lookups["departamentos"],
-            lookups["facultades"],
-        )
-    scd_dictado = aplicar_scd_dictado(dim_dictado_delta)
-
-    print(
-        f"  Tiempo insertados={tiempo_insertados} | "
-        f"Estudiante nuevos={scd_estudiante['insertados']} scd2={scd_estudiante['actualizados_scd2']} scd1={scd_estudiante['actualizados_scd1']} | "
-        f"Dictado nuevos={scd_dictado['insertados']} scd2={scd_dictado['actualizados_scd2']} scd1={scd_dictado['actualizados_scd1']}"
-    )
-
-    print("[4/4] Insertando hechos incrementales...")
-    mapa_estudiante = base_etl.obtener_mapa_estudiante()
-    mapa_dictado = base_etl.obtener_mapa_dictado()
-    mapa_tiempo = base_etl.obtener_mapa_tiempo()
-
-    hechos_insertados = {
-        "fact_inscripcion": 0,
-        "fact_examen_estudiante": 0,
-        "fact_evaluacion_dictado": 0,
-    }
-
-    if not deltas_limpios.get("inscripciones", pd.DataFrame()).empty:
-        # Construye el fact con la firma correcta (4 argumentos).
-        fact_inscripcion, _ = base_etl.construir_fact_inscripcion(
-            deltas_limpios["inscripciones"],
-            mapa_estudiante,
-            mapa_dictado,
-            mapa_tiempo,
-        )
-        # UPSERT para mantener consistencia si el estado cambia.
-        # Nota: NO se actualiza tiempoSKey para no perder la fecha original.
-        hechos_insertados["fact_inscripcion"] = upsert_dataframe(
-            fact_inscripcion,
-            "fact_inscripcion",
-            columnas_update=["estado", "abandono"],
-        )
-
-    if not deltas_limpios.get("examenes", pd.DataFrame()).empty:
-        inscripciones_base = deltas_limpios.get("inscripciones")
-        if inscripciones_base is None or inscripciones_base.empty:
-            inscripciones_raw = leer_staging_completo("stg_inscripcion")
-            inscripciones_base, _ = base_etl.transformar_inscripcion_base(
-                inscripciones_raw
-            )
-            if mapa_estudiantes_dup:
-                inscripciones_base, _ = base_etl.remapear_ids(
-                    inscripciones_base,
-                    mapa_estudiantes_dup,
-                    "id_estudiante",
-                    etiqueta="inscripciones.id_estudiante",
+        print("[2/4] Limpiando y normalizando deltas...")
+        for clave, df_raw in deltas_raw.items():
+            if df_raw.empty:
+                deltas_limpios[clave] = pd.DataFrame()
+                continue
+            deltas_limpios[clave], stats = limpiar_delta(clave, df_raw)
+            stats_limpieza[clave] = stats
+            if stats["rechazados"] > 0 or stats["duplicados"] > 0:
+                print(
+                    f"  Atención {TABLAS_STAGING[clave]}: rechazados={stats['rechazados']} | duplicados={stats['duplicados']}"
                 )
 
-        # Remapeo de id_inscripcion en exámenes usando la tabla persistida.
-        if mapa_inscripciones_dup:
-            deltas_limpios["examenes"], _ = base_etl.remapear_ids(
-                deltas_limpios["examenes"],
-                mapa_inscripciones_dup,
-                "id_inscripcion",
-                etiqueta="examenes.id_inscripcion",
+        # Paso de trazabilidad ACTIVA: recalcula mapas de duplicados con datos completos.
+        mapa_estudiantes_dup, mapa_inscripciones_dup = actualizar_mapeos_duplicados()
+
+        # Remapeo inmediato del delta de inscripciones para mantener coherencia en hechos.
+        if mapa_estudiantes_dup and not deltas_limpios.get("inscripciones", pd.DataFrame()).empty:
+            deltas_limpios["inscripciones"], _ = base_etl.remapear_ids(
+                deltas_limpios["inscripciones"],
+                mapa_estudiantes_dup,
+                "id_estudiante",
+                etiqueta="inscripciones.id_estudiante",
             )
 
-            # Consolidación local: solo para casos impactados por duplicados.
-            deltas_limpios["examenes"], _ = base_etl.consolidar_examenes_duplicados(
+        lookups = construir_lookups_completos()
+
+        print("[3/4] Aplicando dimensiones incrementales...")
+        fechas_tiempo = []
+        if not deltas_limpios.get("inscripciones", pd.DataFrame()).empty:
+            fechas_tiempo.extend(
+                deltas_limpios["inscripciones"]["fecha_inscripcion"].tolist()
+            )
+        if not deltas_limpios.get("examenes", pd.DataFrame()).empty:
+            fechas_tiempo.extend(deltas_limpios["examenes"]["fecha"].tolist())
+        if not deltas_limpios.get("evaluaciones", pd.DataFrame()).empty:
+            fechas_tiempo.extend(
+                deltas_limpios["evaluaciones"]["fecha_evaluacion"].tolist()
+            )
+
+        tiempo_insertados = insertar_tiempo_incremental(fechas_tiempo)
+
+        dim_estudiante_delta = pd.DataFrame()
+        if not deltas_limpios.get("estudiantes", pd.DataFrame()).empty:
+            dim_estudiante_delta, _ = base_etl.construir_dim_estudiante(
+                deltas_limpios["estudiantes"], lookups["programas"]
+            )
+        scd_estudiante = aplicar_scd_estudiante(dim_estudiante_delta)
+
+        dim_dictado_delta = pd.DataFrame()
+        if not deltas_limpios.get("dictados", pd.DataFrame()).empty:
+            dim_dictado_delta, _ = base_etl.construir_dim_dictado(
+                deltas_limpios["dictados"],
+                lookups["cursos"],
+                lookups["docentes"],
+                lookups["departamentos"],
+                lookups["facultades"],
+            )
+        scd_dictado = aplicar_scd_dictado(dim_dictado_delta)
+
+        print(
+            f"  Tiempo insertados={tiempo_insertados} | "
+            f"Estudiante nuevos={scd_estudiante['insertados']} scd2={scd_estudiante['actualizados_scd2']} scd1={scd_estudiante['actualizados_scd1']} | "
+            f"Dictado nuevos={scd_dictado['insertados']} scd2={scd_dictado['actualizados_scd2']} scd1={scd_dictado['actualizados_scd1']}"
+        )
+
+        print("[4/4] Insertando hechos incrementales...")
+        mapa_estudiante = base_etl.obtener_mapa_estudiante()
+        mapa_dictado = base_etl.obtener_mapa_dictado()
+        mapa_tiempo = base_etl.obtener_mapa_tiempo()
+
+        hechos_insertados = {
+            "fact_inscripcion": 0,
+            "fact_examen_estudiante": 0,
+            "fact_evaluacion_dictado": 0,
+        }
+
+        if not deltas_limpios.get("inscripciones", pd.DataFrame()).empty:
+            # Construye el fact con la firma correcta (4 argumentos).
+            fact_inscripcion, _ = base_etl.construir_fact_inscripcion(
+                deltas_limpios["inscripciones"],
+                mapa_estudiante,
+                mapa_dictado,
+                mapa_tiempo,
+            )
+            # UPSERT para mantener consistencia si el estado cambia.
+            # Nota: NO se actualiza tiempoSKey para no perder la fecha original.
+            hechos_insertados["fact_inscripcion"] = upsert_dataframe(
+                fact_inscripcion,
+                "fact_inscripcion",
+                columnas_update=["estado", "abandono"],
+            )
+
+        if not deltas_limpios.get("examenes", pd.DataFrame()).empty:
+            inscripciones_base = deltas_limpios.get("inscripciones")
+            if inscripciones_base is None or inscripciones_base.empty:
+                inscripciones_raw = leer_staging_completo("stg_inscripcion")
+                inscripciones_base, _ = base_etl.transformar_inscripcion_base(
+                    inscripciones_raw
+                )
+                if mapa_estudiantes_dup:
+                    inscripciones_base, _ = base_etl.remapear_ids(
+                        inscripciones_base,
+                        mapa_estudiantes_dup,
+                        "id_estudiante",
+                        etiqueta="inscripciones.id_estudiante",
+                    )
+
+            # Remapeo de id_inscripcion en exámenes usando la tabla persistida.
+            if mapa_inscripciones_dup:
+                deltas_limpios["examenes"], _ = base_etl.remapear_ids(
+                    deltas_limpios["examenes"],
+                    mapa_inscripciones_dup,
+                    "id_inscripcion",
+                    etiqueta="examenes.id_inscripcion",
+                )
+
+                # Consolidación local: solo para casos impactados por duplicados.
+                deltas_limpios["examenes"], _ = base_etl.consolidar_examenes_duplicados(
+                    deltas_limpios["examenes"],
+                    inscripciones_base if inscripciones_base is not None else pd.DataFrame(),
+                    mapa_inscripciones_dup,
+                )
+
+            # Validación con contexto histórico del DWH (regla de intentos).
+            deltas_limpios["examenes"], _ = filtrar_examenes_por_historial(
                 deltas_limpios["examenes"],
                 inscripciones_base if inscripciones_base is not None else pd.DataFrame(),
-                mapa_inscripciones_dup,
+                mapa_estudiante,
+                mapa_dictado,
+                max_intentos=3,
             )
 
-        # Validación con contexto histórico del DWH (regla de intentos).
-        deltas_limpios["examenes"], _ = filtrar_examenes_por_historial(
-            deltas_limpios["examenes"],
-            inscripciones_base if inscripciones_base is not None else pd.DataFrame(),
-            mapa_estudiante,
-            mapa_dictado,
-            max_intentos=3,
+            fact_examen, _ = base_etl.construir_fact_examen_estudiante(
+                deltas_limpios["examenes"],
+                inscripciones_base,
+                mapa_estudiante,
+                mapa_dictado,
+                mapa_tiempo,
+            )
+            # UPSERT para reflejar correcciones de nota/aprobado.
+            # Nota: NO se actualiza tiempoSKey para no alterar la fecha original.
+            hechos_insertados["fact_examen_estudiante"] = upsert_dataframe(
+                fact_examen,
+                "fact_examen_estudiante",
+                columnas_update=["nota", "aprobado"],
+            )
+
+        if not deltas_limpios.get("evaluaciones", pd.DataFrame()).empty:
+            fact_evaluacion, _ = base_etl.construir_fact_evaluacion_dictado(
+                deltas_limpios["evaluaciones"], mapa_dictado, mapa_tiempo
+            )
+            hechos_insertados["fact_evaluacion_dictado"] = insert_ignore_dataframe(
+                fact_evaluacion, "fact_evaluacion_dictado"
+            )
+
+        print(
+            f"  fact_inscripcion={hechos_insertados['fact_inscripcion']} | "
+            f"fact_examen_estudiante={hechos_insertados['fact_examen_estudiante']} | "
+            f"fact_evaluacion_dictado={hechos_insertados['fact_evaluacion_dictado']}"
         )
 
-        fact_examen, _ = base_etl.construir_fact_examen_estudiante(
-            deltas_limpios["examenes"],
-            inscripciones_base,
-            mapa_estudiante,
-            mapa_dictado,
-            mapa_tiempo,
-        )
-        # UPSERT para reflejar correcciones de nota/aprobado.
-        # Nota: NO se actualiza tiempoSKey para no alterar la fecha original.
-        hechos_insertados["fact_examen_estudiante"] = upsert_dataframe(
-            fact_examen,
-            "fact_examen_estudiante",
-            columnas_update=["nota", "aprobado"],
-        )
+        total_delta = sum(len(df) for df in deltas_raw.values())
+        registrar_fin_ejecucion(ejecucion_id, inicio_ejecucion, total_delta, "OK")
 
-    if not deltas_limpios.get("evaluaciones", pd.DataFrame()).empty:
-        fact_evaluacion, _ = base_etl.construir_fact_evaluacion_dictado(
-            deltas_limpios["evaluaciones"], mapa_dictado, mapa_tiempo
-        )
-        hechos_insertados["fact_evaluacion_dictado"] = insert_ignore_dataframe(
-            fact_evaluacion, "fact_evaluacion_dictado"
-        )
+        print("\n[OK] Carga incremental simulada finalizada")
+        print("Auditoria actualizada en base de datos")
 
-    print(
-        f"  fact_inscripcion={hechos_insertados['fact_inscripcion']} | "
-        f"fact_examen_estudiante={hechos_insertados['fact_examen_estudiante']} | "
-        f"fact_evaluacion_dictado={hechos_insertados['fact_evaluacion_dictado']}"
-    )
-
-    total_delta = sum(len(df) for df in deltas_raw.values())
-    control["fecha_ultima_extraccion"] = inicio_ejecucion
-    control["ejecuciones"].append(
-        {
-            "fecha": inicio_ejecucion,
-            "fecha_anterior": ultima,
+        return {
             "registros_delta": total_delta,
             "tiempo_insertados": tiempo_insertados,
             "scd_estudiante": scd_estudiante,
             "scd_dictado": scd_dictado,
             "hechos_insertados": hechos_insertados,
         }
-    )
-    guardar_control(control)
-
-    print("\n[OK] Carga incremental simulada finalizada")
-    print(f"Control actualizado en: {CONTROL_FILE}")
-
-    return {
-        "registros_delta": total_delta,
-        "tiempo_insertados": tiempo_insertados,
-        "scd_estudiante": scd_estudiante,
-        "scd_dictado": scd_dictado,
-        "hechos_insertados": hechos_insertados,
-    }
+    except Exception as exc:
+        registrar_fin_ejecucion(
+            ejecucion_id,
+            inicio_ejecucion,
+            0,
+            "ERROR",
+            mensaje_error=str(exc),
+        )
+        raise
 
 
 if __name__ == "__main__":
