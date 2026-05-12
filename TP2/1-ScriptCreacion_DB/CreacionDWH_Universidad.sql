@@ -16,7 +16,7 @@ CREATE TABLE dim_tiempo (
 CREATE TABLE dim_dictado (
     dictadoSKey INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
     idDictado INT NOT NULL,
-    periodo INT,
+    periodo varchar(2),
     turno VARCHAR(50),
     aula VARCHAR(50),
     cupoMax INT,

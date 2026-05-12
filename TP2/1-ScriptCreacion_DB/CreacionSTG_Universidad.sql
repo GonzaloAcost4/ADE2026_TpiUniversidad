@@ -159,3 +159,19 @@ CREATE TABLE stg_evaluacion_curso (
     INDEX IX_stg_eval_dictado (id_dictado_raw),
     INDEX IX_stg_eval_estudiante (id_estudiante_raw)
 ) ENGINE=InnoDB;
+
+CREATE TABLE stg_estudiantes_repetidos (
+    row_id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    archivo_origen VARCHAR(255) NULL,
+    fecha_carga DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    id_repetido VARCHAR(50) NULL,
+    id_tomado VARCHAR(50) NULL
+) ENGINE=InnoDB;
+
+CREATE TABLE stg_inscripciones_repetidas (
+    row_id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    archivo_origen VARCHAR(255) NULL,
+    fecha_carga DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    id_repetido VARCHAR(50) NULL,
+    id_tomado VARCHAR(50) NULL
+) ENGINE=InnoDB;
