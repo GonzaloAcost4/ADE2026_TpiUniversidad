@@ -17,6 +17,7 @@ La transformación se reutiliza desde `TP2/2-ETL_CargaInicial/transformacion.py`
 para mantener los mismos criterios de limpieza, normalización y validez.
 """
 
+import importlib.util
 import os
 import sys
 from datetime import date, datetime, timezone
@@ -39,8 +40,18 @@ if str(PROJECT_TP2_DIR) not in sys.path:
 if str(CARGA_INICIAL_DIR) not in sys.path:
     sys.path.append(str(CARGA_INICIAL_DIR))
 
-import transformacion as base_etl
 from logging_config import LoggerManager
+
+# Carga dinamica para evitar error de resolucion en el import de transformacion.
+# no se pq me tiraba error la importacion directa, asi que lo hago dinamico y fue pq supuestamente esto anda.
+_transformacion_path = CARGA_INICIAL_DIR / "transformacion.py"
+_transformacion_spec = importlib.util.spec_from_file_location(
+    "transformacion", _transformacion_path
+)
+if _transformacion_spec is None or _transformacion_spec.loader is None:
+    raise ImportError(f"No se pudo cargar transformacion desde {_transformacion_path}")
+base_etl = importlib.util.module_from_spec(_transformacion_spec)
+_transformacion_spec.loader.exec_module(base_etl)
 
 logger = LoggerManager.configurar(
     "carga_incremental",
