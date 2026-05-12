@@ -347,6 +347,242 @@ def registrar_rechazos(nombre: str, total: int, validos: int) -> None:
         LoggerManager.warning(f"{nombre}: {rechazados} registros rechazados")
 
 
+# --------------------------------------------
+# Detección y persistencia de duplicados
+# --------------------------------------------
+
+def construir_mapeo_estudiantes_duplicados(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Detecta estudiantes duplicados por DNI y devuelve filas con
+    (archivo_origen, id_repetido, id_tomado) donde id_tomado es la id
+    canónica (primer registro por orden estable).
+
+    Comentario de solución: permite crear la tabla de trazabilidad
+    `stg_estudiantes_repetidos` para luego remapear inscripciones y
+    exámenes hacia el id_estudiante canónico.
+    """
+    if df.empty or "dni" not in df.columns or "id_estudiante" not in df.columns:
+        LoggerManager.info("Construcción mapeo estudiantes duplicados: entrada vacía o columnas faltantes")
+        return pd.DataFrame(columns=["archivo_origen", "id_repetido", "id_tomado"])
+
+    trabajo = df.copy()
+    columnas_orden = [col for col in ["dni", "id_estudiante"] if col in trabajo.columns]
+    if columnas_orden:
+        trabajo = trabajo.sort_values(columnas_orden, kind="stable")
+
+    trabajo["id_tomado"] = trabajo.groupby("dni")["id_estudiante"].transform("first")
+    duplicados = trabajo[trabajo["dni"].notna() & (trabajo["id_estudiante"] != trabajo["id_tomado"])].copy()
+
+    LoggerManager.info(f"Construcción mapeo estudiantes duplicados: registros analizados={len(trabajo)} | duplicados encontrados={len(duplicados)}")
+
+    if duplicados.empty:
+        LoggerManager.info("No se encontraron estudiantes duplicados por DNI")
+        return pd.DataFrame(columns=["archivo_origen", "id_repetido", "id_tomado"])
+
+    out = duplicados[[col for col in ["archivo_origen", "id_estudiante", "id_tomado"] if col in duplicados.columns]].rename(columns={"id_estudiante": "id_repetido"})
+    for col in ["archivo_origen", "id_repetido", "id_tomado"]:
+        if col not in out.columns:
+            out[col] = None
+    return out[["archivo_origen", "id_repetido", "id_tomado"]]
+
+
+def persistir_registros_estudiantes_duplicados(duplicados: pd.DataFrame) -> Dict[str, int]:
+    """
+    Persiste el mapeo de estudiantes duplicados en `stg_estudiantes_repetidos`.
+
+    Comentario de solución: crea/actualiza la tabla de staging con la
+    equivalencia id_repetido -> id_tomado para uso posterior en remapeos.
+    """
+    columnas = ["archivo_origen", "id_repetido", "id_tomado"]
+    carga = duplicados.copy() if duplicados is not None else pd.DataFrame(columns=columnas)
+
+    for columna in columnas:
+        if columna not in carga.columns:
+            carga[columna] = None
+
+    LoggerManager.info(f"Persistiendo {len(carga)} mapeos de estudiantes duplicados en stg_estudiantes_repetidos")
+    with engine_stg.begin() as conn:
+        conn.execute(text("TRUNCATE TABLE stg_estudiantes_repetidos"))
+        LoggerManager.info("stg_estudiantes_repetidos truncada antes de insertar nuevos registros")
+
+    if carga.empty:
+        LoggerManager.info("stg_estudiantes_repetidos vaciada sin registros duplicados para insertar")
+        return {"registrados": 0}
+
+    carga[columnas].to_sql(name="stg_estudiantes_repetidos", con=engine_stg, if_exists="append", index=False)
+    LoggerManager.info(f"stg_estudiantes_repetidos actualizada con {len(carga)} ids_estudiante duplicados")
+    return {"registrados": int(len(carga))}
+
+
+def obtener_mapa_estudiantes_duplicados() -> Dict[int, int]:
+    """Lee `stg_estudiantes_repetidos` y devuelve dict{id_repetido: id_tomado}."""
+    try:
+        df = pd.read_sql(
+            "SELECT id_repetido, id_tomado FROM stg_estudiantes_repetidos WHERE id_repetido IS NOT NULL AND id_tomado IS NOT NULL",
+            con=engine_stg,
+        )
+    except Exception as exc:
+        LoggerManager.warning(f"No se pudo leer stg_estudiantes_repetidos para remapeo: {exc}")
+        return {}
+
+    if df.empty:
+        LoggerManager.info("No hay mapeos de estudiantes duplicados en stg_estudiantes_repetidos")
+        return {}
+
+    df["id_repetido"] = df["id_repetido"].apply(lambda x: DataCleaner.limpiar_numero(x, "int"))
+    df["id_tomado"] = df["id_tomado"].apply(lambda x: DataCleaner.limpiar_numero(x, "int"))
+    df = df.dropna(subset=["id_repetido", "id_tomado"])
+    return dict(zip(df["id_repetido"], df["id_tomado"]))
+
+
+def remapear_ids(df: pd.DataFrame, mapa_ids: Dict[int, int], columna_objetivo: str) -> Tuple[pd.DataFrame, int]:
+    """
+    Reemplaza valores en `columna_objetivo` según `mapa_ids`.
+
+    Comentario de solución: generaliza el remapeo para `id_estudiante` o
+    `id_inscripcion` según el mapa construido.
+    """
+    if df.empty or not mapa_ids or columna_objetivo not in df.columns:
+        LoggerManager.info(f"Remapeo ids: nada que hacer para columna '{columna_objetivo}'")
+        return df.copy(), 0
+
+    resultado = df.copy()
+    total = len(resultado)
+    afectados = int(resultado[columna_objetivo].isin(mapa_ids.keys()).sum())
+    LoggerManager.info(f"Remapeo ids: columna='{columna_objetivo}' | registros={total} | afectados detectados={afectados}")
+    if afectados > 0:
+        resultado[columna_objetivo] = resultado[columna_objetivo].replace(mapa_ids)
+        LoggerManager.info(f"Remapeo ids: columna='{columna_objetivo}' | remapeados={afectados}")
+    return resultado, afectados
+
+
+def construir_mapeo_inscripciones_duplicadas(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Detecta inscripciones duplicadas por (id_estudiante, id_dictado) y retorna
+    DataFrame (archivo_origen, id_repetido, id_tomado).
+
+    Comentario de solución: identifica inscripciones "fantasma" generadas por
+    estudiantes duplicados y elige una inscripción canónica por orden estable.
+    """
+    if df.empty or not {"id_inscripcion", "id_estudiante", "id_dictado"}.issubset(df.columns):
+        LoggerManager.info("Construcción mapeo inscripciones duplicadas: entrada vacía o columnas faltantes")
+        return pd.DataFrame(columns=["archivo_origen", "id_repetido", "id_tomado"])
+
+    trabajo = df.copy()
+    columnas_orden = [c for c in ["id_estudiante", "id_dictado", "fecha_inscripcion", "id_inscripcion"] if c in trabajo.columns]
+    if columnas_orden:
+        trabajo = trabajo.sort_values(columnas_orden, kind="stable")
+
+    trabajo["id_tomado"] = trabajo.groupby(["id_estudiante", "id_dictado"])["id_inscripcion"].transform("first")
+    duplicados = trabajo[trabajo["id_inscripcion"] != trabajo["id_tomado"]].copy()
+
+    LoggerManager.info(f"Construcción mapeo inscripciones duplicadas: registros analizados={len(trabajo)} | duplicados encontrados={len(duplicados)}")
+
+    if duplicados.empty:
+        LoggerManager.info("No se encontraron inscripciones duplicadas")
+        return pd.DataFrame(columns=["archivo_origen", "id_repetido", "id_tomado"])
+
+    out = duplicados[[col for col in ["archivo_origen", "id_inscripcion", "id_tomado"] if col in duplicados.columns]].rename(columns={"id_inscripcion": "id_repetido"})
+    for col in ["archivo_origen", "id_repetido", "id_tomado"]:
+        if col not in out.columns:
+            out[col] = None
+    return out[["archivo_origen", "id_repetido", "id_tomado"]]
+
+
+def persistir_registros_inscripciones_duplicadas(duplicados: pd.DataFrame) -> Dict[str, int]:
+    columnas = ["archivo_origen", "id_repetido", "id_tomado"]
+    carga = duplicados.copy() if duplicados is not None else pd.DataFrame(columns=columnas)
+    for columna in columnas:
+        if columna not in carga.columns:
+            carga[columna] = None
+
+    LoggerManager.info(f"Persistiendo {len(carga)} mapeos de inscripciones duplicadas en stg_inscripciones_repetidas")
+    with engine_stg.begin() as conn:
+        conn.execute(text("TRUNCATE TABLE stg_inscripciones_repetidas"))
+        LoggerManager.info("stg_inscripciones_repetidas truncada antes de insertar nuevos registros")
+
+    if carga.empty:
+        LoggerManager.info("stg_inscripciones_repetidas vaciada sin registros duplicados para insertar")
+        return {"registrados": 0}
+
+    carga[columnas].to_sql(name="stg_inscripciones_repetidas", con=engine_stg, if_exists="append", index=False)
+    LoggerManager.info(f"stg_inscripciones_repetidas actualizada con {len(carga)} ids_inscripcion duplicadas")
+    return {"registrados": int(len(carga))}
+
+
+def obtener_mapa_inscripciones_duplicadas() -> Dict[int, int]:
+    try:
+        df = pd.read_sql(
+            "SELECT id_repetido, id_tomado FROM stg_inscripciones_repetidas WHERE id_repetido IS NOT NULL AND id_tomado IS NOT NULL",
+            con=engine_stg,
+        )
+    except Exception as exc:
+        LoggerManager.warning(f"No se pudo leer stg_inscripciones_repetidas para remapeo: {exc}")
+        return {}
+
+    if df.empty:
+        LoggerManager.info("No hay mapeos de inscripciones duplicadas en stg_inscripciones_repetidas")
+        return {}
+
+    df["id_repetido"] = df["id_repetido"].apply(lambda x: DataCleaner.limpiar_numero(x, "int"))
+    df["id_tomado"] = df["id_tomado"].apply(lambda x: DataCleaner.limpiar_numero(x, "int"))
+    df = df.dropna(subset=["id_repetido", "id_tomado"])
+    return dict(zip(df["id_repetido"], df["id_tomado"]))
+
+
+def consolidar_examenes(examenes: pd.DataFrame, inscripciones: pd.DataFrame) -> Tuple[pd.DataFrame, Dict[str, int]]:
+    """
+    Consolida exámenes que pertenezcan al mismo estudiante real y dictado,
+    después de remapeos de inscripciones.
+
+    Reglas aplicadas:
+    - Orden cronológico ascendente por `fecha`.
+    - Si existe un intento aprobado, conservar hasta el primer aprobado (inclusive) y descartar posteriores.
+    - Truncar a máximo 3 intentos (los más antiguos).
+    - Renumerar `numero_intento` empezando en 1 por orden cronológico.
+
+    Comentario de solución: garantiza la regla de negocio de "máx. 3 intentos"
+    y evita que intentos posteriores a un aprobado distorsionen el análisis.
+    """
+    if examenes.empty:
+        LoggerManager.info("consolidar_examenes: No hay exámenes para procesar")
+        return examenes.copy(), {"consolidados": 0, "eliminados": 0}
+
+    # Asociar cada examen con id_estudiante y id_dictado vía inscripciones
+    ins_map = inscripciones[["id_inscripcion", "id_estudiante", "id_dictado"]].drop_duplicates()
+    LoggerManager.info(f"consolidar_examenes: mapeo inscripciones tamaño={len(ins_map)} | examenes a procesar={len(examenes)}")
+    df = examenes.merge(ins_map, on="id_inscripcion", how="left")
+
+    completos = df[df["id_estudiante"].notna() & df["id_dictado"].notna()].copy()
+    incompletos = df[~(df["id_estudiante"].notna() & df["id_dictado"].notna())].copy()
+    LoggerManager.info(f"consolidar_examenes: completos={len(completos)} | incompletos={len(incompletos)}")
+
+    completos = completos.sort_values(["id_estudiante", "id_dictado", "fecha", "id_examen"]) 
+
+    def _proc(g):
+        g = g.sort_values("fecha").copy()
+        # detectar primer aprobado
+        aprobado_mask = g["resultado"].fillna("").str.lower().str.contains("aprob") | (g["nota"].notna() & (g["nota"] >= 6))
+        if aprobado_mask.any():
+            first_ap = int(aprobado_mask.to_numpy().argmax())
+            g = g.iloc[: first_ap + 1]
+        # truncar a 3
+        g = g.iloc[:3].copy()
+        g["numero_intento"] = list(range(1, len(g) + 1))
+        return g
+
+    consol = completos.groupby(["id_estudiante", "id_dictado"], group_keys=False).apply(_proc).reset_index(drop=True)
+    final = pd.concat([consol, incompletos], ignore_index=True, sort=False)
+
+    eliminados = len(examenes) - len(final)
+    LoggerManager.info(f"consolidar_examenes: consolidados={len(consol)} | finales={len(final)} | eliminados={int(eliminados)}")
+    return final[examenes.columns], {"consolidados": len(consol), "eliminados": int(eliminados)}
+
+# ============================================
+# TRANSFORMACIONES BASE DESDE STAGING
+# ============================================
+
+
 # ============================================
 # TRANSFORMACIONES BASE DESDE STAGING
 # ============================================
@@ -692,6 +928,7 @@ def transformar_examen_base(df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict]:
         "numero_intento",
         "resultado",
     ]
+
     return validos[columnas], estadisticas(total, len(validos), duplicados)
 
 
@@ -1198,8 +1435,46 @@ def ejecutar_transformacion() -> Dict:
 
     reporte["staging_limpieza"] = stats_base
 
-    # 2. Construcción dimensional.
-    print("[2/5] Construcción de dimensiones...", flush=True)
+    # 2. Consolidación y remapeos de duplicados (estudiantes -> inscripciones -> examenes)
+    print("[2/5] Detección y remapeo de duplicados (estudiantes / inscripciones / examenes)...", flush=True)
+
+    # 2.1 Detectar y persistir estudiantes duplicados por DNI
+    registros_dup_est = construir_mapeo_estudiantes_duplicados(datos.get("estudiantes", pd.DataFrame()))
+    stats_est_persist = persistir_registros_estudiantes_duplicados(registros_dup_est)
+    mapa_est_dup = obtener_mapa_estudiantes_duplicados()
+
+    # Remapear id_estudiante en inscripciones en memoria
+    datos["inscripciones"], cnt_ins_remapeadas = remapear_ids(datos.get("inscripciones", pd.DataFrame()), mapa_est_dup, "id_estudiante")
+
+    # 2.2 Detectar y persistir inscripciones duplicadas (mismo estudiante+dictado)
+    registros_dup_ins = construir_mapeo_inscripciones_duplicadas(datos.get("inscripciones", pd.DataFrame()))
+    stats_ins_persist = persistir_registros_inscripciones_duplicadas(registros_dup_ins)
+    mapa_ins_dup = obtener_mapa_inscripciones_duplicadas()
+
+    # Remapear id_inscripcion en examenes en memoria para apuntar a la inscripción canónica
+    datos["examenes"], cnt_exam_remapeadas = remapear_ids(datos.get("examenes", pd.DataFrame()), mapa_ins_dup, "id_inscripcion")
+
+    # 2.3 Consolidar exámenes: renumerar intentos por fecha, truncar a 3 y
+    # descartar posteriores al primer aprobado (regla de negocio)
+    datos["examenes"], stats_consolidacion_examen = consolidar_examenes(datos.get("examenes", pd.DataFrame()), datos.get("inscripciones", pd.DataFrame()))
+
+    # Reporte de duplicados aplicados
+    reporte["duplicados"] = {
+        "estudiantes_registrados": stats_est_persist.get("registrados", 0),
+        "inscripciones_registradas": stats_ins_persist.get("registrados", 0),
+        "inscripciones_remapeadas": int(cnt_ins_remapeadas),
+        "examenes_remapeados": int(cnt_exam_remapeadas),
+        "examenes_consolidados": stats_consolidacion_examen,
+    }
+
+    print(
+        f"  Duplicados: estudiantes_reg={stats_est_persist.get('registrados',0)} | inscripciones_reg={stats_ins_persist.get('registrados',0)} | "
+        f"inscripciones_remapeadas={cnt_ins_remapeadas} | examenes_remapeados={cnt_exam_remapeadas} | examenes_eliminados={stats_consolidacion_examen.get('eliminados',0)}",
+        flush=True,
+    )
+
+    # 3. Construcción dimensional.
+    print("[3/5] Construcción de dimensiones...", flush=True)
     fechas_tiempo = []
     if not datos["inscripciones"].empty:
         fechas_tiempo.extend(datos["inscripciones"]["fecha_inscripcion"].tolist())
