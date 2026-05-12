@@ -1552,14 +1552,12 @@ def imprimir_reporte(reporte: Dict) -> None:
     )
 
     print("\nResumen general:")
-    print(f"  Total insertados en DWH: {total_insertados}")
-    print(f"  Total errores de inserción: {total_errores}")
+    LoggerManager.info(f"Total insertados en DWH: {total_insertados}")
+    LoggerManager.info(f"Total errores de inserción en DWH: {total_errores}")
 
     if total_errores == 0:
-        print("\n[OK] TRANSFORMACIÓN DIMENSIONAL FINALIZADA")
         LoggerManager.info("Transformación dimensional completada exitosamente")
     else:
-        print("\n[WARN] Transformación completada con errores de inserción")
         LoggerManager.warning("Transformación dimensional completada con errores")
 
     print(f"\nLog guardado en: {LoggerManager.obtener_ruta_logs()}")

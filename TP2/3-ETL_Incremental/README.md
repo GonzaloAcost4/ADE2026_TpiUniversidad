@@ -41,21 +41,15 @@ La **Fase 3: Carga Incremental** se ejecutará periódicamente (diaria, semanal,
 
 ---
 
-## 📁 Estructura de 4-ETL_Incremental
+## 📁 Estructura de 3-ETL_Incremental
 
 ```
-4-ETL_Incremental/
-├── detectar_cambios.ipynb        # Detectar nuevos/modificados
-├── carga_incremental.ipynb       # Procesar e insertar cambios
-├── validar_incremental.ipynb     # Validar consistencia
+3-ETL_Incremental/
+├── carga_incremental.py          # Procesar e insertar cambios
 ├── logs/                         # Logs de ejecución
-│   ├── detectar_cambios_*.log
-│   ├── carga_incremental_*.log
-│   └── validar_incremental_*.log
+│   └── carga_incremental_*.log
 ├── datos_control/                # Archivos de control
-│   ├── ultima_extraccion.json    # Timestamp última extracción
-│   ├── checksums.csv             # Checksums de registros
-│   └── registros_procesados.log  # Auditoría de cambios
+│   └── ultima_extraccion.json    # Timestamp última extracción
 └── README.md                     # Este archivo
 ```
 
@@ -205,6 +199,31 @@ logger.info(f"Total de cambios detectados: {datos_control['cambios_detectados']}
 ### 📌 Objetivo
 
 Procesar los cambios detectados (nuevos/modificados) e integrarlos en el DWH aplicando estrategias de **Slowly Changing Dimensions (SCD)**.
+
+---
+
+## ✅ Decisiones de diseño en `carga_incremental.py`
+
+### 1) No actualizar `tiempoSKey` en UPSERT de hechos
+
+En `fact_inscripcion` y `fact_examen_estudiante`, el `tiempoSKey` representa la
+fecha del evento original (inscripcion o examen). Por eso el UPSERT solo
+actualiza columnas de estado/metricas (`estado`, `abandono`, `nota`, `aprobado`)
+y **no** sobrescribe la fecha historica.
+
+### 2) Recalcular `numero_intento` con offset historico
+
+Para evitar que el delta pise intentos previos, el incremental consulta el DWH
+y calcula el intento real como:
+
+```
+intento_real = intentos_previos_en_dwh + 1
+```
+
+Luego reescribe `numero_intento` antes de insertar/actualizar el hecho.
+
+Estas dos decisiones evitan la falsificacion de fechas y la corrupcion de
+historicos cuando existen reintentos o correcciones en el origen.
 
 ### 🔄 Estrategias de Dimensiones Lentamente Cambiantes
 
