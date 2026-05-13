@@ -482,23 +482,23 @@ def actualizar_dimension_scd1(
 
 def aplicar_scd_estudiante(dim_estudiante_delta: pd.DataFrame) -> Dict[str, int]:
     columnas_scd2 = [
-        "nombre_programa",
-        "tipo_programa",
-        "duracion_programa",
-        "anio_plan_programa",
+        "nombrePrograma",
+        "tipoPrograma",
+        "duracionAniosPrograma",
+        "anioPlanPrograma",
     ]
     columnas_scd1 = [
         "genero",
-        "egreso_carrera",
-        "anio_egreso",
-        "abandono_carrera",
-        "anio_abandono",
+        "egresoCarrera",
+        "anioEgreso",
+        "abandonoCarrera",
+        "anioAbandono",
     ]
     return aplicar_scd_generico(
         df_delta=dim_estudiante_delta,
         tabla="dim_estudiante",
-        clave_natural="id_estudiante",
-        sk_columna="estudiante_skey",
+        clave_natural="idalumno",
+        sk_columna="alumnoSKey",
         columnas_scd2=columnas_scd2,
         columnas_scd1=columnas_scd1,
     )
@@ -508,22 +508,22 @@ def aplicar_scd_dictado(dim_dictado_delta: pd.DataFrame) -> Dict[str, int]:
     columnas_scd2 = [
         "periodo",
         "turno",
-        "horas_teorica",
-        "horas_practica",
-        "horas_laboratorio",
-        "nivel_curso",
-        "nombre_docente",
-        "apellido_docente",
-        "titulo_docente",
-        "categoria_docente",
-        "dedicacion_docente",
+        "horasTeoCurso",
+        "horasPracCurso",
+        "horasLabCurso",
+        "nivelCurso",
+        "nombreDocente",
+        "apellidoDocente",
+        "tituloDocente",
+        "categoriaDocente",
+        "dedicacionDocente",
     ]
-    columnas_scd1 = ["aula", "cupo_maximo", "nombre_curso"]
+    columnas_scd1 = ["aula", "cupoMax", "nombreCurso"]
     return aplicar_scd_generico(
         df_delta=dim_dictado_delta,
         tabla="dim_dictado",
-        clave_natural="id_dictado",
-        sk_columna="dictado_skey",
+        clave_natural="idDictado",
+        sk_columna="dictadoSKey",
         columnas_scd2=columnas_scd2,
         columnas_scd1=columnas_scd1,
     )
@@ -599,7 +599,7 @@ def obtener_historial_examenes(
 ) -> Dict[Tuple[int, int], Dict[str, int]]:
     """
     Caja blanca: consulta el DWH para conocer intentos previos por
-    (estudiante_skey, dictado_skey). Esto evita validar exámenes solo con el delta.
+    (alumnoSKey, dictadoSKey). Esto evita validar exámenes solo con el delta.
     """
     if pares.empty:
         return {}
@@ -611,22 +611,22 @@ def obtener_historial_examenes(
     for i in range(0, total, tamanio_lote):
         bloque = pares_unicos.iloc[i : i + tamanio_lote]
         valores = ", ".join(
-            f"({int(row.estudiante_skey)}, {int(row.dictado_skey)})"
+            f"({int(row.alumnoSKey)}, {int(row.dictadoSKey)})"
             for row in bloque.itertuples()
         )
         if not valores:
             continue
 
         query = text(
-            "SELECT estudiante_skey, dictado_skey, COUNT(*) AS intentos, "
+            "SELECT alumnoSKey, dictadoSKey, COUNT(*) AS intentos, "
             "MAX(aprobado) AS aprobado "
             "FROM fact_examen_estudiante "
-            f"WHERE (estudiante_skey, dictado_skey) IN ({valores}) "
-            "GROUP BY estudiante_skey, dictado_skey"
+            f"WHERE (alumnoSKey, dictadoSKey) IN ({valores}) "
+            "GROUP BY alumnoSKey, dictadoSKey"
         )
         df_hist = pd.read_sql(query, con=base_etl.engine_dwh)
         for row in df_hist.itertuples():
-            historial[(int(row.estudiante_skey), int(row.dictado_skey))] = {
+            historial[(int(row.alumnoSKey), int(row.dictadoSKey))] = {
                 "intentos": int(row.intentos or 0),
                 "aprobado": int(row.aprobado or 0),
             }
@@ -661,12 +661,12 @@ def filtrar_examenes_por_historial(
     df = examenes.copy()
     df["id_inscripcion"] = df["id_inscripcion"].astype("Int64")
     df = df.merge(ins_map, on="id_inscripcion", how="left")
-    df["estudiante_skey"] = df["id_estudiante"].map(mapa_estudiante)
-    df["dictado_skey"] = df["id_dictado"].map(mapa_dictado)
+    df["alumnoSKey"] = df["id_estudiante"].map(mapa_estudiante)
+    df["dictadoSKey"] = df["id_dictado"].map(mapa_dictado)
 
-    validos = df["estudiante_skey"].notna() & df["dictado_skey"].notna()
+    validos = df["alumnoSKey"].notna() & df["dictadoSKey"].notna()
     df_validos = df[validos].copy()
-    pares = df_validos[["estudiante_skey", "dictado_skey"]].drop_duplicates()
+    pares = df_validos[["alumnoSKey", "dictadoSKey"]].drop_duplicates()
     historial = obtener_historial_examenes(pares)
 
     aceptados = []
@@ -674,7 +674,7 @@ def filtrar_examenes_por_historial(
     columnas_originales = list(examenes.columns)
 
     for (alumno_skey, dictado_skey), grupo in df_validos.groupby(
-        ["estudiante_skey", "dictado_skey"], sort=False
+        ["alumnoSKey", "dictadoSKey"], sort=False
     ):
         info = historial.get(
             (int(alumno_skey), int(dictado_skey)), {"intentos": 0, "aprobado": 0}
