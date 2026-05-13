@@ -1,0 +1,25 @@
+FROM python:3.10-slim
+
+# Instalar cron y dependencias del sistema
+RUN apt-get update && apt-get install -y cron gcc default-libmysqlclient-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Crear directorio de trabajo
+WORKDIR /app
+
+# Copiar el proyecto al contenedor
+COPY . /app
+
+# Instalar dependencias Python (ajustar si usás requirements)
+RUN pip install --no-cache-dir -r TP2/requirements.txt
+
+# Copiar y dar permisos al runner
+RUN chmod +x /app/run_incremental.sh
+
+# Añadir job de cron: ejecutar run_incremental.sh todos los días a las 22:00
+RUN echo "0 22 * * * /app/run_incremental.sh >> /app/TP2/3-ETL_Incremental/logs/incremental_cron.log 2>&1" > /etc/cron.d/etl_incremental
+RUN chmod 0644 /etc/cron.d/etl_incremental
+RUN crontab /etc/cron.d/etl_incremental
+
+# Ejecutar cron en primer plano
+CMD ["/usr/sbin/cron", "-f"]
