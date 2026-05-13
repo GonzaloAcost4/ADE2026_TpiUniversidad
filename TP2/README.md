@@ -123,10 +123,21 @@ graph LR
    - Conversión de tipos de datos
    - Validación de rangos
 3. **Transformación:**
-   - Deduplicación
-   - Creación de dimensiones
-   - Cálculo de métricas
+   - Creación de dimensiones (estudiantes, docentes, programas, tiempo, etc.)
+   - Resolución de estudiantes duplicados (por legajo/DNI) y generación de la tabla `mapeo_estudiantes_duplicados`.
+   - **Remapeo de claves foráneas:** Actualización de IDs en las tablas de hechos (`inscripcion`, `examen`) para apuntar al estudiante unificado correcto (sobreviviente).
+   - Cálculo de métricas e intentos.
 4. **Carga en DWH:** INSERT en tablas finales
+
+### **Fase 3: Carga Incremental (3-ETL_Incremental)**
+
+**Script:** `3-ETL_Incremental/carga_incremental.py`
+
+Esta fase detecta, procesa y carga solo los registros nuevos o modificados, manteniendo sincronizado el Data Warehouse de forma periódica sin necesidad de reconstruirlo por completo.
+
+- **Auditoría y Detección de Cambios:** Manejado mediante la tabla `etl_auditoria_incremental` para control de marcas de agua.
+- **SCD (Slowly Changing Dimensions):** Estrategias para mantener o sobrescribir el historial de cambios en dimensiones (SCD Tipo 1 para actualizaciones in-place, SCD Tipo 2 para mantener versiones históricas).
+- **Actualización de Hechos (UPSERT):** Se insertan nuevos hechos o se actualizan atributos de estados y métricas (como notas, aprobación, abandono) preservando correctamente la fecha original del evento.
 
 ---
 
@@ -235,98 +246,6 @@ Ver más en [LOGGING_README.md](./LOGGING_README.md)
 
 ---
 
-## ⏳ Componentes Pendientes (Fase Actual)
-
-### En `2-ETL_CargaInicial/`:
-
-#### 1️⃣ **carga_dwh.py** [⏳ TODO]
-
-**Responsabilidad:** Carga incremental en el Data Warehouse
-
-**Funcionalidad esperada:**
-
-- Detectar registros nuevos vs. existentes
-- Aplicar estrategia UPSERT (UPDATE/INSERT)
-- Mantener integridad referencial
-- Registrar cambios para auditoría
-
-**Entrada:** Tablas STG (ya cargadas y transformadas)
-**Salida:** Tablas DWH actualizadas
-
----
-
-#### 2️⃣ **orquestador.py** [⏳ TODO]
-
-**Responsabilidad:** Orquestar todo el flujo ETL
-
-**Funcionalidad esperada:**
-
-- Ejecutar secuencialmente:
-  1. Validación de fuentes de datos
-  2. `carga_staging.py` → Cargar CSV a Staging
-  3. `transformacion.py` → Transformar Staging a DWH
-  4. Reporte de ejecución y estadísticas
-- Manejo de errores y reintentos
-- Generación de reporte consolidado
-- Email/Notificación de éxito o fallo
-
-**Flujo sugerido:**
-
-```
-[Inicio] → [Validar] → [Carga STG] → [Transformar] → [Reporte] → [Fin]
-                           ↓            ↓                ↓
-                      [Log OK/Error] [Log OK/Error] [Log Resumen]
-```
-
----
-
-## 🔮 Futura Fase: Carga Incremental (4-ETL_Incremental)
-
-Esta fase se ejecutará periódicamente (diaria, semanal, etc.) para incorporar cambios sin reconstruir el DW completo.
-
-### **Tareas Planificadas:**
-
-#### 1. **Detectar cambios** (`detectar_cambios.py`)
-
-- Identificar nuevos registros desde última carga
-- Identificar registros modificados
-- Comparar timestamps o checksums
-- Generar lista de registros delta
-
-#### 2. **Carga Incremental** (`carga_incremental.py`)
-
-- Procesar solo registros nuevos/modificados
-- Aplicar transformaciones delta
-- Actualizar dimensiones (SCD Type 1, 2, o 3)
-- Minimizar impacto en DW activo
-
-#### 3. **Validación y Reconciliación**
-
-- Verificar integridad de datos
-- Comparar conteos antes/después
-- Generar reporte de cambios
-- Alertar de anomalías
-
-### **Consideraciones de Diseño:**
-
-```mermaid
-graph LR
-    A["CSV de cambios"] -->|Delta Detection| B["Nuevos/Modificados"]
-    C["DWH Actual"] -->|Comparar| B
-    B -->|SCD Strategy| D["DWH Actualizado"]
-
-    style A fill:#FFE4B5
-    style D fill:#87CEEB
-```
-
-**Estrategias de Dimensiones:**
-
-- **SCD Type 1:** Sobrescribir (sin histórico)
-- **SCD Type 2:** Agregar nuevo registro (con histórico)
-- **SCD Type 3:** Agregar columna anterior (histórico limitado)
-
----
-
 ## 🔍 Validaciones y Calidad
 
 ### Verificaciones implementadas:
@@ -402,27 +321,26 @@ graph LR
 - [x] Sistema centralizado de logging
 - [x] Documentación
 
-### Fase 2: Completar Carga Inicial [⏳ EN PROGRESO]
+### Fase 2: Orquestador y Carga DWH [✅ COMPLETADA]
 
-- [ ] `carga_dwh.py` - Carga en DW
-- [ ] `orquestador.py` - Ejecutar flujo completo
-- [ ] Validaciones adicionales
-- [ ] Reporte de ejecución
+- [x] Integración de `transformacion.py` para carga directa al DWH
+- [x] `orquestador.py` - Ejecuta automáticamente todo el flujo inicial secuencialmente
+- [x] Reporte de ejecución detallado en consola
 
-### Fase 3: Carga Incremental [🔮 FUTURO]
+### Fase 3: Carga Incremental [✅ COMPLETADA]
 
-- [ ] `detectar_cambios.py` - Detectar delta
-- [ ] `carga_incremental.py` - Procesar cambios
-- [ ] Estrategia de Dimensiones Lentamente Cambiantes
-- [ ] Scheduling (Airflow/Cron)
+- [x] Auditoría y detección de delta integrada en BD
+- [x] `carga_incremental.py` - Procesa los datos y los impacta en DWH
+- [x] Estrategia de Dimensiones Lentamente Cambiantes (SCD 1 y 2)
+- [x] Automatización y pruebas con `run_test.py`
 
 ---
 
 ## 📞 Contacto / Notas
 
-- **Última actualización:** 5 de mayo de 2026
-- **Estado del proyecto:** En desarrollo - Fase de Carga Inicial
-- **Próximo hito:** Completar orquestador y carga incremental
+- **Última actualización:** 13 de mayo de 2026
+- **Estado del proyecto:** Pipeline ETL Inicial e Incremental Completados
+- **Próximo hito:** Mantenimiento y optimización de consultas en el DWH
 
 ---
 
