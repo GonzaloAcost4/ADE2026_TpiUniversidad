@@ -54,7 +54,7 @@ La **Fase 3: Carga Incremental** se ejecutará periódicamente (diaria, semanal,
 
 ---
 
-## 1️⃣ Detectar Cambios: `detectar_cambios.ipynb`
+## 1️⃣ Detectar Cambios: `detectar_cambios.py`
 
 ### 📌 Objetivo
 
@@ -187,7 +187,7 @@ logger.info(f"Total de cambios detectados: {total_cambios}")
 
 ---
 
-## 2️⃣ Carga Incremental: `carga_incremental.ipynb`
+## 2️⃣ Carga Incremental: `carga_incremental.py`
 
 ### 📌 Objetivo
 
@@ -432,7 +432,7 @@ mapeo_scd = {
 
 ---
 
-## 3️⃣ Validación: `validar_incremental.ipynb`
+## 3️⃣ Validación: `validar_incremental.py`
 
 ### 📌 Objetivo
 
@@ -570,11 +570,11 @@ dag = DAG('etl_incremental_diario',
           schedule_interval='0 23 * * *')  # 23:00 UTC diariamente
 
 def ejecutar_detectar_cambios():
-    # Ejecutar detectar_cambios.ipynb
+    # Ejecutar detectar_cambios.py
     pass
 
 def ejecutar_carga_incremental():
-    # Ejecutar carga_incremental.ipynb
+    # Ejecutar carga_incremental.py
     pass
 
 task1 = PythonOperator(task_id='detectar', python_callable=ejecutar_detectar_cambios, dag=dag)
@@ -589,10 +589,10 @@ task1 >> task2  # Dependency: task1 antes de task2
 # /etc/crontab o crontab -e
 
 # Ejecución diaria a las 23:00
-0 23 * * * cd /ruta/TP2 && jupyter nbconvert --execute --to notebook 4-ETL_Incremental/detectar_cambios.ipynb && jupyter nbconvert --execute --to notebook 4-ETL_Incremental/carga_incremental.ipynb
+0 23 * * * cd /ruta/TP2 && python 3-ETL_Incremental/detectar_cambios.py && python 3-ETL_Incremental/carga_incremental.py
 
 # Ejecución semanal domingo 02:00
-0 2 * * 0 cd /ruta/TP2 && python 4-ETL_Incremental/orquestador_incremental.py
+0 2 * * 0 cd /ruta/TP2 && python 3-ETL_Incremental/orquestador_incremental.py
 ```
 
 #### **Opción 3: Windows Task Scheduler**
@@ -669,4 +669,4 @@ Register-ScheduledTask -TaskName "ETL_Incremental_Diario" -Action $action -Trigg
 
 **Última actualización:** 5 de mayo de 2026  
 **Estado:** Planificación - Fase 3 pendiente  
-**Próximo hito:** Implementación de detectar_cambios.ipynb
+**Próximo hito:** Mantenimiento de las rutinas incrementales.

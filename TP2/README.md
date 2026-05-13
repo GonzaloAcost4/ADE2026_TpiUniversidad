@@ -18,11 +18,11 @@ TP2/
 ├── .env                              # Variables de entorno (NO versionado)
 ├── .env.ex                           # Template de variables de entorno
 │
-├── 1-ScriptCreación_UniversidadDWH/
-│   └── CreacionDWH_Universidad.sql   # Script SQL para crear DW
-│
-├── 2-ScriptCreación_UniversidadSTG/
-│   └── CreacionSTG_Universidad.sql   # Script SQL para crear Staging
+├── 1-ScriptCreacion_DB/              # Creación de esquemas y tablas
+│   ├── CreacionDWH_Universidad.sql   # Script SQL para crear DW
+│   ├── CreacionSTG_Universidad.sql   # Script SQL para crear Staging
+│   ├── crear_bd_y_tablas.py          # [✅] Script automático para crear DBs usando .env
+│   └── README.md
 │
 ├── 2-ETL_CargaInicial/               # Carga inicial (Full Load)
 │   ├── carga_staging.py              # [✅] Carga inicial desde CSV a Staging
@@ -61,21 +61,16 @@ TP2/
 
 ### **Fase 1: Inicialización de Bases de Datos**
 
-1. **Crear Staging (`STG`)** - [Script 2]
-   - Tablas de almacenamiento intermedio
-   - Columnas con sufijo `_raw` (tipo VARCHAR)
-   - Campos de auditoría: `archivo_origen`, `fecha_carga`
+1. **Crear Staging (`STG`) y Data Warehouse (`DWH`)**
+   - Ejecución automatizada con `1-ScriptCreacion_DB/crear_bd_y_tablas.py`
+   - Se conecta automáticamente usando `.env` y lee los scripts SQL correspondientes.
+   - Tablas `STG` (almacenamiento intermedio) y `DWH` (tablas dimensionales y hechos).
 
-2. **Crear Data Warehouse (`DWH`)** - [Script 1]
-   - Tablas dimensionales y de hechos
-   - Tipos de datos correctos
-   - Claves primarias y foráneas
-
-### **Fase 2: Carga Inicial (3-ETL_CargaInicial)**
+### **Fase 2: Carga Inicial (2-ETL_CargaInicial)**
 
 #### 📌 Paso 1: Carga Staging
 
-**Notebook:** `3-ETL_CargaInicial/carga_staging.ipynb`
+**Script:** `2-ETL_CargaInicial/carga_staging.py`
 
 ```mermaid
 graph LR
@@ -109,7 +104,7 @@ graph LR
 
 #### 📌 Paso 2: Transformación
 
-**Notebook:** `3-ETL_CargaInicial/transformacion.ipynb`
+**Script:** `2-ETL_CargaInicial/transformacion.py`
 
 ```mermaid
 graph LR
@@ -157,14 +152,14 @@ graph LR
    DB_HOST=localhost
    DB_PORT=3306
    STG_DATABASE=universidad_staging
-   DW_DATABASE=universidad_dw
+   DWH_DATABASE=universidad_dw
    ```
 
-3. **Crear bases de datos SQL:**
+3. **Crear bases de datos y tablas SQL:**
    ```bash
-   # Desde MySQL CLI o client
-   mysql -u root -p < 2-ScriptCreación_UniversidadSTG/CreacionSTG_Universidad.sql
-   mysql -u root -p < 1-ScriptCreación_UniversidadDWH/CreacionDWH_Universidad.sql
+   cd 1-ScriptCreacion_DB
+   python crear_bd_y_tablas.py
+   cd ..
    ```
 
 ### **Ejecutar ETL Carga Inicial**
@@ -195,7 +190,7 @@ python 3-ETL_Incremental/run_test.py
 Los logs se generan automáticamente en:
 
 ```
-3-ETL_CargaInicial/logs/
+2-ETL_CargaInicial/logs/
 ├── carga_staging_20260505_143022.log
 └── transformacion_20260505_143515.log
 ```
@@ -203,7 +198,7 @@ Los logs se generan automáticamente en:
 **Ver logs en tiempo real:**
 
 ```bash
-tail -f 3-ETL_CargaInicial/logs/carga_staging_*.log
+tail -f 2-ETL_CargaInicial/logs/carga_staging_*.log
 ```
 
 ---
@@ -216,7 +211,7 @@ Todos los procesos ETL usan un sistema centralizado de logging definido en `logg
 
 - ✅ Logs en archivo + consola simultáneamente
 - ✅ Formato consistente: `YYYY-MM-DD HH:MM:SS - LEVEL - mensaje`
-- ✅ Guardados en `3-ETL_CargaInicial/logs/` con timestamp
+- ✅ Guardados en `2-ETL_CargaInicial/logs/` con timestamp
 - ✅ Reutilizable en todos los notebooks
 - ✅ Niveles: INFO, WARNING, ERROR, DEBUG
 
@@ -242,9 +237,9 @@ Ver más en [LOGGING_README.md](./LOGGING_README.md)
 
 ## ⏳ Componentes Pendientes (Fase Actual)
 
-### En `3-ETL_CargaInicial/`:
+### En `2-ETL_CargaInicial/`:
 
-#### 1️⃣ **carga_dwh.ipynb** [⏳ TODO]
+#### 1️⃣ **carga_dwh.py** [⏳ TODO]
 
 **Responsabilidad:** Carga incremental en el Data Warehouse
 
@@ -260,7 +255,7 @@ Ver más en [LOGGING_README.md](./LOGGING_README.md)
 
 ---
 
-#### 2️⃣ **orquestador.ipynb** [⏳ TODO]
+#### 2️⃣ **orquestador.py** [⏳ TODO]
 
 **Responsabilidad:** Orquestar todo el flujo ETL
 
@@ -268,8 +263,8 @@ Ver más en [LOGGING_README.md](./LOGGING_README.md)
 
 - Ejecutar secuencialmente:
   1. Validación de fuentes de datos
-  2. `carga_staging.ipynb` → Cargar CSV a Staging
-  3. `transformacion.ipynb` → Transformar Staging a DWH
+  2. `carga_staging.py` → Cargar CSV a Staging
+  3. `transformacion.py` → Transformar Staging a DWH
   4. Reporte de ejecución y estadísticas
 - Manejo de errores y reintentos
 - Generación de reporte consolidado
@@ -291,14 +286,14 @@ Esta fase se ejecutará periódicamente (diaria, semanal, etc.) para incorporar 
 
 ### **Tareas Planificadas:**
 
-#### 1. **Detectar cambios** (`detectar_cambios.ipynb`)
+#### 1. **Detectar cambios** (`detectar_cambios.py`)
 
 - Identificar nuevos registros desde última carga
 - Identificar registros modificados
 - Comparar timestamps o checksums
 - Generar lista de registros delta
 
-#### 2. **Carga Incremental** (`carga_incremental.ipynb`)
+#### 2. **Carga Incremental** (`carga_incremental.py`)
 
 - Procesar solo registros nuevos/modificados
 - Aplicar transformaciones delta
@@ -383,7 +378,7 @@ graph LR
 | "ModuleNotFoundError: logging_config" | Verificar que `.env` existe con credenciales correctas                                      |
 | "Connection refused"                  | Verificar que MySQL está corriendo y credenciales son correctas                             |
 | "Table doesn't exist"                 | Ejecutar scripts de creación: `CreacionSTG_Universidad.sql` y `CreacionDWH_Universidad.sql` |
-| Logs no se crean                      | Verificar permisos de escritura en carpeta `3-ETL_CargaInicial/`                            |
+| Logs no se crean                      | Verificar permisos de escritura en carpeta `2-ETL_CargaInicial/`                            |
 | CSV no encuentra                      | Verificar que archivos están en carpeta `Sources/`                                          |
 
 ---
@@ -409,15 +404,15 @@ graph LR
 
 ### Fase 2: Completar Carga Inicial [⏳ EN PROGRESO]
 
-- [ ] `carga_dwh.ipynb` - Carga en DW
-- [ ] `orquestador.ipynb` - Ejecutar flujo completo
+- [ ] `carga_dwh.py` - Carga en DW
+- [ ] `orquestador.py` - Ejecutar flujo completo
 - [ ] Validaciones adicionales
 - [ ] Reporte de ejecución
 
 ### Fase 3: Carga Incremental [🔮 FUTURO]
 
-- [ ] `detectar_cambios.ipynb` - Detectar delta
-- [ ] `carga_incremental.ipynb` - Procesar cambios
+- [ ] `detectar_cambios.py` - Detectar delta
+- [ ] `carga_incremental.py` - Procesar cambios
 - [ ] Estrategia de Dimensiones Lentamente Cambiantes
 - [ ] Scheduling (Airflow/Cron)
 

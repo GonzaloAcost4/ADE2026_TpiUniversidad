@@ -429,9 +429,8 @@ Un registro puede no llegar al DWH por tres motivos principales:
 
 ## Orden de ejecución recomendado
 
-1. Crear o recrear staging con `CreacionSTG_Universidad.sql` para asegurar que `stg_evaluacion_curso` tenga `id_estudiante_raw` y `fecha_evaluacion_raw`.
-2. Crear el DWH con `CreacionDWH_Universidad.sql`.
-3. Ejecutar `orquestador.py` (este script se encarga de lanzar `carga_staging.py` y `transformacion.py` en el orden correcto).
+1. Ejecutar el script `crear_bd_y_tablas.py` (ubicado en `1-ScriptCreacion_DB/`) para automatizar la creación del Staging y DWH asegurando la última versión estructural con las credenciales de tu `.env`.
+2. Ejecutar `orquestador.py` (este script se encarga de lanzar `carga_staging.py` y `transformacion.py` en el orden correcto).
 
 ## Salida de consola
 

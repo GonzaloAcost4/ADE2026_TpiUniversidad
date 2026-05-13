@@ -27,7 +27,7 @@ Una clase con métodos estáticos que gestiona logging de forma centralizada.
 
 ## 🚀 Cómo usar
 
-### 1. En tu notebook ETL
+### 1. En tu script ETL
 
 ```python
 import sys
@@ -37,7 +37,7 @@ sys.path.append(os.path.join(os.getcwd(), '..'))
 # Importar el LoggerManager
 from logging_config import LoggerManager
 
-# Configurar al inicio del notebook
+# Configurar al inicio del script
 logger = LoggerManager.configurar(
     "nombre_de_tu_proceso",
     ruta_raiz=os.path.join(os.getcwd())
@@ -91,24 +91,24 @@ Los logs se guardan automáticamente en:
 
 ## 📝 Notebooks ya configurados
 
-- ✅ `ETL_CargaInicial/carga_staging.ipynb`
-- ✅ `ETL_Transformacion/transformacion.ipynb`
+- ✅ `2-ETL_CargaInicial/carga_staging.py`
+- ✅ `2-ETL_CargaInicial/transformacion.py`
 
-Ambos notebooks ya importan y usan `LoggerManager`.
+Ambos scripts ya importan y usan `LoggerManager`.
 
 ## 🔧 Ventajas del nuevo sistema
 
 ✅ **DRY (Don't Repeat Yourself):** Configuración única para todos los procesos  
 ✅ **Consistencia:** Mismo formato de logs en todos los ETLs  
 ✅ **Mantenibilidad:** Un único punto de cambio para actualizar logging  
-✅ **Reutilizable:** Cualquier nuevo notebook puede importar `LoggerManager`  
+✅ **Reutilizable:** Cualquier nuevo script puede importar `LoggerManager`  
 ✅ **Automatizado:** Directorios y archivos generados automáticamente  
 ✅ **Escalable:** Fácil agregar nuevas características de logging
 
 ## 📌 Ejemplo completo
 
 ```python
-# Inicio del notebook
+# Inicio del script
 import sys
 import os
 sys.path.append(os.path.join(os.getcwd(), '..'))
@@ -138,7 +138,7 @@ except Exception as e:
 **P:** ¿Puedo usar `logger` directamente en funciones?  
 **R:** Sí. Una vez configurado con `LoggerManager.configurar()`, puedes usar `LoggerManager.info()`, etc., desde cualquier parte del código.
 
-**P:** ¿Qué pasa si ejecuto el notebook varias veces?  
+**P:** ¿Qué pasa si ejecuto el script varias veces?  
 **R:** Se crean múltiples archivos de log (uno por ejecución) con timestamps diferentes. Los logs anteriores se preservan.
 
 **P:** ¿Puedo cambiar el nivel de logging (DEBUG, INFO, WARNING, ERROR)?  
