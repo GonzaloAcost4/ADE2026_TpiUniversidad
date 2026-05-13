@@ -24,21 +24,21 @@ TP2/
 ├── 2-ScriptCreación_UniversidadSTG/
 │   └── CreacionSTG_Universidad.sql   # Script SQL para crear Staging
 │
-├── 3-ETL_CargaInicial/               # ⭐ ETAPA ACTUAL DE TRABAJO
-│   ├── carga_staging.ipynb           # [✅] Carga inicial desde CSV a Staging
-│   ├── transformacion.ipynb          # [✅] Transformación de Staging a DWH
-│   ├── logs/                         # Directorio de logs generados automáticamente
+├── 2-ETL_CargaInicial/               # Carga inicial (Full Load)
+│   ├── carga_staging.py              # [✅] Carga inicial desde CSV a Staging
+│   ├── transformacion.py             # [✅] Transformación de Staging a DWH
+│   ├── orquestador.py                # [✅] Orquestador principal de carga inicial
+│   ├── logs/                         # Directorio de logs
 │   │   ├── carga_staging_*.log
 │   │   └── transformacion_*.log
-│   ├── PLANES_FUTUROS.md             # Documentación de items pendientes
-│   └── [EN DESARROLLO]
-│       ├── carga_dwh.ipynb           # [⏳ TODO] Carga incremental en DWH
-│       └── orquestador.ipynb         # [⏳ TODO] Orquestador de procesos ETL
+│   └── README.md
 │
-├── 4-ETL_Incremental/                # Carga incremental (futuro)
-│   ├── detectar_cambios.ipynb        # [⏳ TODO] Detectar nuevos/modificados
-│   ├── carga_incremental.ipynb       # [⏳ TODO] Procesar cambios
-│   └── logs/
+├── 3-ETL_Incremental/                # Carga incremental (SCD y Deltas)
+│   ├── carga_incremental.py          # [✅] Procesar e insertar cambios
+│   ├── run_test.py                   # [✅] Simulador automatizado de pruebas
+│   ├── test_data_incremental.sql     # Datos de test para incremental
+│   ├── logs/                         # Directorio de logs
+│   └── README.md
 │
 └── Sources/                          # Datos de entrada
     ├── ADE_TP2_Analisis_de_los_datos.ipynb
@@ -169,28 +169,25 @@ graph LR
 
 ### **Ejecutar ETL Carga Inicial**
 
-**Opción A: Notebooks individuales** (Jupyter)
+**Opción A: Carga Inicial (Full Load)**
 
+Ejecuta el pipeline completo desde cero:
 ```bash
-# Terminal 1: Carga Staging
-jupyter notebook 3-ETL_CargaInicial/carga_staging.ipynb
-
-# Terminal 2: Transformación
-jupyter notebook 3-ETL_CargaInicial/transformacion.ipynb
+python 2-ETL_CargaInicial/orquestador.py
 ```
 
-**Opción B: VS Code**
+**Opción B: Carga Incremental**
 
-- Abrir `3-ETL_CargaInicial/carga_staging.ipynb`
-- Ejecutar todas las celdas (Ctrl+Shift+Enter)
-- Abrir `3-ETL_CargaInicial/transformacion.ipynb`
-- Ejecutar todas las celdas
-
-**Opción C: Python CLI** (cuando esté disponible el orquestador)
-
+Procesa únicamente los cambios nuevos detectados en Staging:
 ```bash
-# Ejecutar orquestador (futuro)
-python 3-ETL_CargaInicial/orquestador.py
+python 3-ETL_Incremental/carga_incremental.py
+```
+
+**Opción C: Simulador Automático de Carga Incremental**
+
+Para pruebas, inserta datos simulados y corre el incremental cada 30 segundos:
+```bash
+python 3-ETL_Incremental/run_test.py
 ```
 
 ### **Visualizar Logs**

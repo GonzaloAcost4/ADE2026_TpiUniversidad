@@ -88,14 +88,28 @@ DWH_DATABASE=dw_universidad
 mysql -u root -p < TP2/2-ScriptCreación_UniversidadSTG/CreacionSTG_Universidad.sql
 mysql -u root -p < TP2/1-ScriptCreación_UniversidadDWH/CreacionDWH_Universidad.sql
 ```
-### 5. Ejecutar el ETL (en orden)
+### 5. Ejecutar el ETL
+
+**A. Carga Inicial (Full Load)**
+Este proceso borra todo el staging, extrae los CSV completos y carga las dimensiones y hechos en el Data Warehouse desde cero.
 ```bash
-# Paso 1: cargar CSV a Staging
-jupyter notebook TP2/3-ETL_CargaInicial/carga_staging.ipynb
-# Paso 2: transformar Staging al DWH
-jupyter notebook TP2/3-ETL_CargaInicial/transformacion.ipynb
+cd TP2/2-ETL_CargaInicial
+python orquestador.py
 ```
-Ejecutar todas las celdas de cada notebook en orden.
+
+**B. Carga Incremental**
+Este proceso detecta los cambios nuevos en Staging y los integra al Data Warehouse.
+```bash
+cd TP2/3-ETL_Incremental
+python carga_incremental.py
+```
+
+**C. Simulador Automático (Testing)**
+Si querés ver el incremental en acción, podés lanzar el simulador que insertará datos de prueba periódicamente y lanzará el script incremental de forma automática.
+```bash
+cd TP2/3-ETL_Incremental
+python run_test.py
+```
 ---
 ## 📊 Datos de entrada
 | Archivo | Filas aprox. | Descripción |

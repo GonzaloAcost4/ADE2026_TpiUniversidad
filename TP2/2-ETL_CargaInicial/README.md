@@ -431,8 +431,7 @@ Un registro puede no llegar al DWH por tres motivos principales:
 
 1. Crear o recrear staging con `CreacionSTG_Universidad.sql` para asegurar que `stg_evaluacion_curso` tenga `id_estudiante_raw` y `fecha_evaluacion_raw`.
 2. Crear el DWH con `CreacionDWH_Universidad.sql`.
-3. Ejecutar `carga_staging.py`.
-4. Ejecutar `transformacion.py`.
+3. Ejecutar `orquestador.py` (este script se encarga de lanzar `carga_staging.py` y `transformacion.py` en el orden correcto).
 
 ## Salida de consola
 

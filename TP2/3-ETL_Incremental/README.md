@@ -43,11 +43,12 @@ La **Fase 3: Carga Incremental** se ejecutará periódicamente (diaria, semanal,
 
 ## 📁 Estructura de 3-ETL_Incremental
 
-```
+```text
 3-ETL_Incremental/
-├── carga_incremental.py          # Procesar e insertar cambios
-├── logs/                         # Logs de ejecución
-│   └── carga_incremental_*.log
+├── carga_incremental.py          # Script principal de carga y actualización SCD
+├── run_test.py                   # Simulador de entorno (inserts + schedule)
+├── test_data_incremental.sql     # Archivo SQL con datos de prueba
+├── logs/                         # Logs de ejecución (creado dinámicamente)
 └── README.md                     # Este archivo
 ```
 
@@ -645,18 +646,14 @@ Register-ScheduledTask -TaskName "ETL_Incremental_Diario" -Action $action -Trigg
 
 ## ✅ Checklist Completo - Fase 3
 
-- [ ] Crear estructura de carpeta `4-ETL_Incremental`
-- [ ] Implementar `detectar_cambios.ipynb`
-- [ ] Implementar `carga_incremental.ipynb`
-- [ ] Implementar `validar_incremental.ipynb`
-- [ ] Crear orquestador incremental
-- [ ] Implementar sistema de scheduling (Airflow/Cron)
-- [ ] Crear dashboard de monitoreo
-- [ ] Documentar en README
-- [ ] Pruebas end-to-end
-- [ ] Validar con datos reales
-- [ ] Configurar alertas
-- [ ] Capacitación del equipo
+- [x] Crear estructura de carpeta `3-ETL_Incremental`
+- [x] Implementar detección de cambios (Integrado en SQL / auditoría)
+- [x] Implementar `carga_incremental.py` (Con SCD Type 1 y Type 2)
+- [x] Implementar `run_test.py` con inserción dinámica
+- [x] Implementar sistema de scheduling usando la librería `schedule` en `run_test.py`
+- [x] Manejo de auditoria (tabla `etl_auditoria_incremental`)
+- [x] Documentar en README
+- [x] Pruebas end-to-end con `run_test.py`
 
 ---
 

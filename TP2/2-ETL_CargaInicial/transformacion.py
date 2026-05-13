@@ -410,12 +410,14 @@ def persistir_mapeo_duplicados(
         return {}
 
     carga = mapeo[["id_repetido", "id_tomado"]].copy()
+    carga["id_repetido"] = carga["id_repetido"].astype(int)
+    carga["id_tomado"] = carga["id_tomado"].astype(int)
     carga.to_sql(name=tabla_destino, con=engine_stg, if_exists="append", index=False)
     LoggerManager.info(f"{tabla_destino}: {len(carga)} mapeos persistidos")
 
     return dict(zip(
-        carga["id_repetido"].astype(int),
-        carga["id_tomado"].astype(int),
+        carga["id_repetido"],
+        carga["id_tomado"],
     ))
 
 
