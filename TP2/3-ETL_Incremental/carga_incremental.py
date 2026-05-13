@@ -139,7 +139,7 @@ def registrar_inicio_ejecucion(ultima_extraccion: Optional[str]) -> int:
     )
     with base_etl.engine_stg.begin() as conn:
         result = conn.execute(
-            query, {"inicio": datetime.now(timezone.utc), "ultima": ultima_extraccion}
+            query, {"inicio": datetime.now(), "ultima": ultima_extraccion}
         )
         return int(result.lastrowid)
 
@@ -164,7 +164,7 @@ def registrar_fin_ejecucion(
         conn.execute(
             query,
             {
-                "fin": datetime.now(timezone.utc),
+                "fin": datetime.now(),
                 "nueva": nueva_extraccion,
                 "delta": registros_delta,
                 "estado": estado,
@@ -290,8 +290,8 @@ def actualizar_mapeos_duplicados() -> Tuple[Dict[int, int], Dict[int, int]]:
         conn.execute(query_inscripciones_trunc)
         conn.execute(query_inscripciones_insert)
 
-    mapa_estudiantes_dup = base_etl.obtener_mapa_estudiantes_duplicados()
-    mapa_inscripciones_dup = base_etl.obtener_mapa_inscripciones_duplicadas()
+    mapa_estudiantes_dup = base_etl.leer_mapeo_duplicados("stg_estudiantes_repetidos")
+    mapa_inscripciones_dup = base_etl.leer_mapeo_duplicados("stg_inscripciones_repetidas")
 
     return mapa_estudiantes_dup or {}, mapa_inscripciones_dup or {}
 
@@ -334,7 +334,6 @@ def insert_ignore_dataframe(df: pd.DataFrame, tabla: str) -> int:
     with base_etl.engine_dwh.begin() as conn:
         resultado = conn.execute(query, registros)
         return int(resultado.rowcount or 0)
-
 
 def upsert_dataframe(df: pd.DataFrame, tabla: str, columnas_update: List[str]) -> int:
     """
@@ -428,6 +427,28 @@ def valores_cambiaron(
     for columna in columnas_comparables:
         actual = fila_actual.get(columna)
         nuevo = registro_nuevo.get(columna)
+
+        # Normalizar nulos (por si pandas dejó algún NaN en el dict)
+        if pd.isna(actual): actual = None
+        if pd.isna(nuevo): nuevo = None
+
+        if actual == nuevo:
+            continue
+        if actual is None and nuevo is None:
+            continue
+
+        # Si uno es nulo y el otro no, cambiaron
+        if actual is None or nuevo is None:
+            return True
+
+        # Comparación robusta para números (evita que 5.0 == 5 de False por ser str)
+        try:
+            if float(actual) == float(nuevo):
+                continue
+        except (ValueError, TypeError):
+            pass
+
+        # Fallback a string
         if str(actual) != str(nuevo):
             return True
     return False
@@ -455,19 +476,24 @@ def actualizar_dimension_scd1(
 
 
 def aplicar_scd_estudiante(dim_estudiante_delta: pd.DataFrame) -> Dict[str, int]:
-    columnas_scd2 = ["anio_plan_prog"]
+    columnas_scd2 = [
+        "nombrePrograma",
+        "tipoPrograma",
+        "duracionAniosPrograma",
+        "anioPlanPrograma"
+    ]
     columnas_scd1 = [
         "genero",
-        "egreso_carrera",
-        "anio_egreso",
-        "abandono_carrera",
-        "anio_abandono",
+        "egresoCarrera",
+        "anioEgreso",
+        "abandonoCarrera",
+        "anioAbandono",
     ]
     return aplicar_scd_generico(
         df_delta=dim_estudiante_delta,
         tabla="dim_estudiante",
         clave_natural="idalumno",
-        sk_columna="estudiante_skey",
+        sk_columna="alumnoSKey",
         columnas_scd2=columnas_scd2,
         columnas_scd1=columnas_scd1,
     )
@@ -477,22 +503,22 @@ def aplicar_scd_dictado(dim_dictado_delta: pd.DataFrame) -> Dict[str, int]:
     columnas_scd2 = [
         "periodo",
         "turno",
-        "horas_teoria",
-        "horas_practica",
-        "horas_lab",
-        "nivel_curso",
-        "nombre_docente",
-        "apellido_docente",
-        "titulo_docente",
-        "categoria_docente",
-        "dedicacion_docente",
+        "horasTeoCurso",
+        "horasPracCurso",
+        "horasLabCurso",
+        "nivelCurso",
+        "nombreDocente",
+        "apellidoDocente",
+        "tituloDocente",
+        "categoriaDocente",
+        "dedicacionDocente",
     ]
-    columnas_scd1 = ["aula", "cupo_max", "nombre_curso"]
+    columnas_scd1 = ["aula", "cupoMax", "nombreCurso"]
     return aplicar_scd_generico(
         df_delta=dim_dictado_delta,
         tabla="dim_dictado",
         clave_natural="idDictado",
-        sk_columna="dictado_skey",
+        sk_columna="dictadoSKey",
         columnas_scd2=columnas_scd2,
         columnas_scd1=columnas_scd1,
     )
@@ -620,8 +646,11 @@ def filtrar_examenes_por_historial(
     if examenes.empty:
         return examenes.copy(), {"aceptados": 0, "rechazados": 0}
 
-    ins_map = inscripciones[["id_inscripcion", "id_estudiante", "id_dictado"]].drop_duplicates()
-    df = examenes.merge(ins_map, on="id_inscripcion", how="left")
+    ins_map = inscripciones[["id_inscripcion", "id_estudiante", "id_dictado"]].drop_duplicates().copy()
+    ins_map["id_inscripcion"] = ins_map["id_inscripcion"].astype("Int64")
+    df = examenes.copy()
+    df["id_inscripcion"] = df["id_inscripcion"].astype("Int64")
+    df = df.merge(ins_map, on="id_inscripcion", how="left")
     df["alumnoSKey"] = df["id_estudiante"].map(mapa_estudiante)
     df["dictadoSKey"] = df["id_dictado"].map(mapa_dictado)
 
@@ -686,7 +715,7 @@ def procesar_incremental() -> Dict:
     """
     print("\n=== Carga incremental simulada STG -> DWH ===")
     ultima = obtener_ultima_extraccion()
-    inicio_ejecucion = datetime.now(timezone.utc).isoformat()
+    inicio_ejecucion = datetime.now().isoformat()
     ejecucion_id = registrar_inicio_ejecucion(ultima)
 
     try:
@@ -723,6 +752,12 @@ def procesar_incremental() -> Dict:
         # Paso de trazabilidad ACTIVA: recalcula mapas de duplicados con datos completos.
         mapa_estudiantes_dup, mapa_inscripciones_dup = actualizar_mapeos_duplicados()
 
+        # Filtrar estudiantes duplicados para no crear nuevas dimensiones falsas
+        if mapa_estudiantes_dup and not deltas_limpios.get("estudiantes", pd.DataFrame()).empty:
+            df_est = deltas_limpios["estudiantes"]
+            ids_repetidos = list(mapa_estudiantes_dup.keys())
+            deltas_limpios["estudiantes"] = df_est[~df_est["id_estudiante"].isin(ids_repetidos)].copy()
+
         # Remapeo inmediato del delta de inscripciones para mantener coherencia en hechos.
         if mapa_estudiantes_dup and not deltas_limpios.get("inscripciones", pd.DataFrame()).empty:
             deltas_limpios["inscripciones"], _ = base_etl.remapear_ids(
@@ -730,6 +765,21 @@ def procesar_incremental() -> Dict:
                 mapa_estudiantes_dup,
                 "id_estudiante",
                 etiqueta="inscripciones.id_estudiante",
+            )
+
+        # Filtrar inscripciones duplicadas
+        if mapa_inscripciones_dup and not deltas_limpios.get("inscripciones", pd.DataFrame()).empty:
+            df_ins = deltas_limpios["inscripciones"]
+            ids_ins_repetidos = list(mapa_inscripciones_dup.keys())
+            deltas_limpios["inscripciones"] = df_ins[~df_ins["id_inscripcion"].isin(ids_ins_repetidos)].copy()
+
+        # Remapear id_inscripcion en exámenes
+        if mapa_inscripciones_dup and not deltas_limpios.get("examenes", pd.DataFrame()).empty:
+            deltas_limpios["examenes"], _ = base_etl.remapear_ids(
+                deltas_limpios["examenes"],
+                mapa_inscripciones_dup,
+                "id_inscripcion",
+                etiqueta="examenes.id_inscripcion",
             )
 
         lookups = construir_lookups_completos()
@@ -803,7 +853,12 @@ def procesar_incremental() -> Dict:
         if not deltas_limpios.get("examenes", pd.DataFrame()).empty:
             inscripciones_base = deltas_limpios.get("inscripciones")
             if inscripciones_base is None or inscripciones_base.empty:
-                inscripciones_raw = leer_staging_completo("stg_inscripcion")
+                ids_necesarios = [
+                    int(x) for x in deltas_limpios["examenes"]["id_inscripcion"].dropna().unique()
+                ]
+                ids_str = ",".join(f"'{id}'" for id in ids_necesarios)
+                query = text(f"SELECT * FROM stg_inscripcion WHERE id_inscripcion_raw IN ({ids_str})")
+                inscripciones_raw = pd.read_sql(query, con=base_etl.engine_stg)
                 inscripciones_base, _ = base_etl.transformar_inscripcion_base(
                     inscripciones_raw
                 )
@@ -891,7 +946,6 @@ def procesar_incremental() -> Dict:
             mensaje_error=str(exc),
         )
         raise
-
 
 if __name__ == "__main__":
     procesar_incremental()
