@@ -195,13 +195,13 @@ DWH_DATABASE=dw_universidad
 
 ### Levantar MySQL
 ```bash
-docker compose up -d
+docker compose up --build -d
 ```
 
 ### Reinicializar desde cero
 ```bash
 docker compose down -v
-docker compose up -d
+docker compose up --build -d
 ```
 
 ### Verificar bases creadas
