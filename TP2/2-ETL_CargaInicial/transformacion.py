@@ -92,19 +92,14 @@ engine_dwh = create_engine(
     poolclass=NullPool,
 )
 
+LoggerManager.reiniciar()
 logger = LoggerManager.configurar(
     "transformacion",
     ruta_raiz=str(SCRIPT_DIR),
     carpeta_logs="logs",
 )
 
-for handler in logger.handlers:
-    if isinstance(handler, logging.StreamHandler) and not isinstance(
-        handler, logging.FileHandler
-    ):
-        handler.setLevel(logging.WARNING)
-
-print(f"[OK] Conexiones configuradas | STG={STG_DATABASE} | DWH={DWH_DATABASE}")
+logger.info(f"[OK] Conexiones configuradas | STG={STG_DATABASE} | DWH={DWH_DATABASE}")
 
 # ============================================
 # CONSTANTES DEL DWH (nuevos nombres según CreacionDWH_Universidad.sql)
@@ -466,10 +461,6 @@ def remapear_ids(
     """
     if df.empty or not mapa_ids or columna_objetivo not in df.columns:
         LoggerManager.info(f"Remapeo ids: nada que hacer para columna '{columna_objetivo}'")
-        print(
-            f"    [REMAPPING] {etiqueta or columna_objetivo}: sin cambios (entrada vacía o sin mapa)",
-            flush=True,
-        )
         return df.copy(), 0
 
     resultado = df.copy()
@@ -478,10 +469,6 @@ def remapear_ids(
     afectados = int(resultado[columna_objetivo].isin(claves_mapa).sum())
     nombre = etiqueta or columna_objetivo
 
-    print(
-        f"    [REMAPPING] {nombre}: iniciando | filas={total} | candidatos={afectados}",
-        flush=True,
-    )
     LoggerManager.info(f"Remapeo ids: columna='{columna_objetivo}' | registros={total} | afectados detectados={afectados}")
 
     if afectados > 0:
@@ -499,18 +486,12 @@ def remapear_ids(
                 ].replace(mapa_ids)
                 remapeados += int(mascara.sum())
 
-            print(
-                f"    [REMAPPING] {nombre}: lote {i + 1}/{total_lotes} | remapeados acumulados={remapeados}",
-                flush=True,
-            )
+            LoggerManager.info(f"Remapeo ids: columna='{columna_objetivo}' | lote {i + 1}/{total_lotes} | remapeados acumulados={remapeados}")
 
         afectados = remapeados
         LoggerManager.info(f"Remapeo ids: columna='{columna_objetivo}' | remapeados={afectados}")
 
-    print(
-        f"    [REMAPPING] {nombre}: finalizado | remapeados={afectados}",
-        flush=True,
-    )
+    LoggerManager.info(f"Remapeo ids: columna='{columna_objetivo}' | finalizado | remapeados={afectados}")
     return resultado, afectados
 
 
@@ -530,14 +511,11 @@ def consolidar_examenes_duplicados(
     - Truncar a máximo 3 intentos por (id_estudiante, id_dictado).
     """
     if examenes.empty:
-        print("    [CONSOLIDACIÓN] sin exámenes para procesar", flush=True)
+        LoggerManager.info("Consolidación exámenes: sin exámenes para procesar")
         return examenes.copy(), {"afectados": 0, "grupos": 0, "eliminados": 0}
 
     if inscripciones.empty or not mapa_inscripciones_duplicadas:
-        print(
-            "    [CONSOLIDACIÓN] sin mapa de inscripciones duplicadas, no se consolidan exámenes",
-            flush=True,
-        )
+        LoggerManager.info("Consolidación exámenes: sin mapa de inscripciones duplicadas, no se consolidan exámenes")
         return examenes.copy(), {"afectados": 0, "grupos": 0, "eliminados": 0}
 
     ins_map = inscripciones[["id_inscripcion", "id_estudiante", "id_dictado"]].drop_duplicates()
@@ -556,18 +534,12 @@ def consolidar_examenes_duplicados(
     no_afectados = df[~mascara_impactados].copy()
 
     if afectados.empty:
-        print(
-            "    [CONSOLIDACIÓN] no hay exámenes vinculados a inscripciones duplicadas",
-            flush=True,
-        )
+        LoggerManager.info("Consolidación exámenes: no hay exámenes vinculados a inscripciones duplicadas")
         return examenes.copy(), {"afectados": 0, "grupos": 0, "eliminados": 0}
 
     grupos = list(afectados.groupby(["id_estudiante", "id_dictado"], sort=False))
     total_grupos = len(grupos)
-    print(
-        f"    [CONSOLIDACIÓN] grupos impactados={total_grupos} | exámenes impactados={len(afectados)}",
-        flush=True,
-    )
+    LoggerManager.info(f"Consolidación exámenes: grupos impactados={total_grupos} | exámenes impactados={len(afectados)}")
 
     piezas = []
     eliminados = 0
@@ -587,18 +559,13 @@ def consolidar_examenes_duplicados(
         piezas.append(g)
 
         if i % 5000 == 0 or i == total_grupos:
-            print(
-                f"    [CONSOLIDACIÓN] progreso grupos {i}/{total_grupos} | eliminados acumulados={eliminados}",
-                flush=True,
-            )
+            LoggerManager.info(f"Consolidación exámenes: progreso grupos {i}/{total_grupos} | eliminados acumulados={eliminados}")
 
     consolidados = pd.concat(piezas, ignore_index=True, sort=False) if piezas else afectados.iloc[0:0].copy()
     final = pd.concat([consolidados, no_afectados], ignore_index=True, sort=False)
 
-    print(
-        f"    [CONSOLIDACIÓN] finalizado | afectados={len(afectados)} | eliminados={eliminados}",
-        flush=True,
-    )
+    LoggerManager.info(f"Consolidación exámenes: finalizado | afectados={len(afectados)} | eliminados={eliminados}")
+    
     return final[examenes.columns], {
         "afectados": int(len(afectados)),
         "grupos": int(total_grupos),
@@ -1384,31 +1351,34 @@ def insertar_dataframe(
     resultados = {"insertados": 0, "errores": 0, "lotes": 0}
     num_lotes = (len(df) + tamanio_lote - 1) // tamanio_lote
 
-    for i in range(num_lotes):
-        inicio = i * tamanio_lote
-        fin = min(inicio + tamanio_lote, len(df))
-        lote = df.iloc[inicio:fin].copy()
+    LoggerManager.info(f"Iniciando inserción en {tabla_destino}: {len(df)} registros en {num_lotes} lotes")
 
-        try:
-            lote.to_sql(
-                name=tabla_destino,
-                con=engine_dwh,
-                if_exists="append",
-                index=False,
-            )
-            resultados["insertados"] += len(lote)
-            resultados["lotes"] += 1
-            LoggerManager.info(
-                f"{tabla_destino} lote {i + 1}/{num_lotes}: {len(lote)} registros"
-            )
-        except Exception as exc:
-            resultados["errores"] += len(lote)
-            LoggerManager.error(
-                f"Error insertando lote {i + 1} en {tabla_destino}: {exc}"
-            )
-            print(f"  [ERROR] {tabla_destino} - lote {i + 1}/{num_lotes}: {exc}")
-            raise
+    try:
+        with engine_dwh.begin() as conn:
+            for i in range(num_lotes):
+                inicio = i * tamanio_lote
+                fin = min(inicio + tamanio_lote, len(df))
+                lote = df.iloc[inicio:fin].copy()
 
+                try:
+                    lote.to_sql(
+                        name=tabla_destino,
+                        con=conn,
+                        if_exists="append",
+                        index=False,
+                    )
+                    resultados["insertados"] += len(lote)
+                    resultados["lotes"] += 1
+                except Exception as exc:
+                    resultados["errores"] += len(lote)
+                    LoggerManager.error(
+                        f"Error insertando lote {i + 1} en {tabla_destino}: {exc}"
+                    )
+                    raise
+    except Exception as general_exc:
+        raise general_exc
+
+    LoggerManager.info(f"Inserción en {tabla_destino} finalizada. {resultados['insertados']} registros insertados.")
     return resultados
 
 
@@ -1444,10 +1414,7 @@ def cargar_tabla(
         "final": final,
     }
 
-    print(
-        f"  {nombre_tabla}: transformados={stats_transformacion['válidos']} | "
-        f"insertados={stats_insert['insertados']} | errores={stats_insert['errores']} | final={final}"
-    )
+    LoggerManager.info(f"  {nombre_tabla}: transformados={stats_transformacion['válidos']} | insertados={stats_insert['insertados']} | errores={stats_insert['errores']} | final={final}")
 
 
 # ============================================
@@ -1456,16 +1423,12 @@ def cargar_tabla(
 
 
 def ejecutar_transformacion() -> Dict:
-    print("\n=== Transformación dimensional STG -> DWH ===", flush=True)
+    LoggerManager.info("Transformación dimensional STG -> DWH")
 
     reporte: Dict = {}
 
     # 1. Lectura y limpieza base.
-    print("[1/5] Limpieza y validación de staging...", flush=True)
-    print(
-        "  Nota: el DWH se reinicia en el paso [3/5], cuando la limpieza base ya terminó.",
-        flush=True,
-    )
+    LoggerManager.info("Limpieza y validación de staging")
     staging_transformaciones = {
         "facultades": ("stg_facultad", transformar_facultad_base),
         "departamentos": ("stg_departamento", transformar_departamento_base),
@@ -1484,17 +1447,14 @@ def ejecutar_transformacion() -> Dict:
     stats_base: Dict[str, Dict] = {}
 
     for clave, (tabla_stg, funcion) in staging_transformaciones.items():
-        print(f"  Procesando {tabla_stg}...", flush=True)
+        LoggerManager.info(f"Procesando {tabla_stg}")
         df_raw = leer_tabla_staging(tabla_stg)
         datos_raw[clave] = df_raw
         df_limpio, stats = funcion(df_raw)
         datos[clave] = df_limpio
         stats_base[tabla_stg] = stats
         if stats["rechazados"] > 0 or stats["duplicados"] > 0:
-            print(
-                f"    Atención: rechazados={stats['rechazados']} | duplicados={stats['duplicados']}",
-                flush=True,
-            )
+            LoggerManager.warning(f"Atención: rechazados={stats['rechazados']} | duplicados={stats['duplicados']}")
 
     reporte["staging_limpieza"] = stats_base
 
@@ -1505,10 +1465,10 @@ def ejecutar_transformacion() -> Dict:
     #      para estudiantes que eran duplicados.
     #    - Remapear id_inscripcion en exámenes hacia la canónica.
     #    - Consolidar intentos de examen impactados.
-    print("[2/5] Detección y remapeo de duplicados (estudiantes / inscripciones / examenes)...", flush=True)
+    LoggerManager.info("Detección y remapeo de duplicados (estudiantes / inscripciones / examenes)")
 
     # 2.1 Detectar estudiantes duplicados por DNI y deduplicar
-    print("  [2.1] Detectando estudiantes duplicados por DNI...", flush=True)
+    LoggerManager.info("Detectando estudiantes duplicados por DNI")
     datos["estudiantes"], mapeo_est = detectar_duplicados(
         datos["estudiantes"], ["dni"], "id_estudiante",
         etiqueta="estudiantes por DNI",
@@ -1516,7 +1476,7 @@ def ejecutar_transformacion() -> Dict:
     mapa_est_dup = persistir_mapeo_duplicados(mapeo_est, "stg_estudiantes_repetidos")
 
     # 2.2 Remapear id_estudiante en inscripciones
-    print("  [2.2] Remapeando inscripciones por equivalencias de estudiantes...", flush=True)
+    LoggerManager.info("Remapeando inscripciones por equivalencias de estudiantes")
     datos["inscripciones"], cnt_ins_remapeadas = remapear_ids(
         datos.get("inscripciones", pd.DataFrame()),
         mapa_est_dup,
@@ -1525,7 +1485,7 @@ def ejecutar_transformacion() -> Dict:
     )
 
     # 2.3 Detectar inscripciones duplicadas SOLO de estudiantes duplicados
-    print("  [2.3] Detectando inscripciones duplicadas de estudiantes duplicados...", flush=True)
+    LoggerManager.info("Detectando inscripciones duplicadas de estudiantes duplicados")
     mapa_ins_dup: Dict[int, int] = {}
     cnt_ins_dup = 0
     if mapa_est_dup:
@@ -1549,7 +1509,7 @@ def ejecutar_transformacion() -> Dict:
             conn.execute(text("TRUNCATE TABLE stg_inscripciones_repetidas"))
 
     # 2.4 Remapear id_inscripcion en exámenes
-    print("  [2.4] Remapeando exámenes por equivalencias de inscripciones...", flush=True)
+    LoggerManager.info("Remapeando exámenes por equivalencias de inscripciones")
     datos["examenes"], cnt_exam_remapeadas = remapear_ids(
         datos.get("examenes", pd.DataFrame()),
         mapa_ins_dup,
@@ -1558,7 +1518,7 @@ def ejecutar_transformacion() -> Dict:
     )
 
     # 2.5 Consolidar intentos de examen impactados por duplicados
-    print("  [2.5] Consolidando intentos en casos impactados por duplicados...", flush=True)
+    LoggerManager.info("Consolidando intentos en casos impactados por duplicados")
     datos["examenes"], stats_consolidacion_examen = consolidar_examenes_duplicados(
         datos.get("examenes", pd.DataFrame()),
         datos.get("inscripciones", pd.DataFrame()),
@@ -1573,15 +1533,10 @@ def ejecutar_transformacion() -> Dict:
         "examenes_consolidados": stats_consolidacion_examen,
     }
 
-    print(
-        f"  Duplicados: estudiantes={len(mapeo_est)} | inscripciones={cnt_ins_dup} | "
-        f"ins_remapeadas={cnt_ins_remapeadas} | exam_remapeados={cnt_exam_remapeadas} | "
-        f"exam_afectados={stats_consolidacion_examen.get('afectados',0)} | exam_eliminados={stats_consolidacion_examen.get('eliminados',0)}",
-        flush=True,
-    )
+    LoggerManager.info(f"Duplicados: estudiantes={len(mapeo_est)} | inscripciones={cnt_ins_dup} | ins_remapeadas={cnt_ins_remapeadas} | exam_remapeados={cnt_exam_remapeadas} | exam_afectados={stats_consolidacion_examen.get('afectados',0)} | exam_eliminados={stats_consolidacion_examen.get('eliminados',0)}")
 
     # 3. Construcción dimensional.
-    print("[3/5] Construcción de dimensiones...", flush=True)
+    LoggerManager.info("Construcción de dimensiones")
     fechas_tiempo = []
     if not datos["inscripciones"].empty:
         fechas_tiempo.extend(datos["inscripciones"]["fecha_inscripcion"].tolist())
@@ -1602,17 +1557,14 @@ def ejecutar_transformacion() -> Dict:
         datos["facultades"],
     )
 
-    print(
-        f"  Dimensiones listas: Tiempo={len(dim_tiempo)} | estudiante={len(dim_estudiante)} | Dictado={len(dim_dictado)}",
-        flush=True,
-    )
+    LoggerManager.info(f"Dimensiones listas: Tiempo={len(dim_tiempo)} | estudiante={len(dim_estudiante)} | Dictado={len(dim_dictado)}")
 
     # 3. Truncate único de todo el DWH antes de cargar.
-    print("[3/5] Reinicio controlado de tablas DWH...", flush=True)
+    LoggerManager.info("Reinicio controlado de tablas DWH")
     truncar_dwh()
 
     # 4. Carga de dimensiones.
-    print("[4/5] Carga de dimensiones y hechos...", flush=True)
+    LoggerManager.info("Carga de dimensiones y hechos")
     cargar_tabla("dim_tiempo", dim_tiempo, reporte, stats_tiempo)
     cargar_tabla("dim_estudiante", dim_estudiante, reporte, stats_estudiante)
     cargar_tabla("dim_dictado", dim_dictado, reporte, stats_dictado)
@@ -1650,7 +1602,7 @@ def ejecutar_transformacion() -> Dict:
 
 
 def imprimir_reporte(reporte: Dict) -> None:
-    print("[5/5] Reporte final", flush=True)
+    LoggerManager.info("Reporte final")
 
     problemas_staging = [
         (tabla, stats)
@@ -1658,24 +1610,18 @@ def imprimir_reporte(reporte: Dict) -> None:
         if stats["rechazados"] > 0 or stats["duplicados"] > 0
     ]
     if problemas_staging:
-        print("\nStaging con registros rechazados o duplicados:")
+        LoggerManager.warning("Staging con registros rechazados o duplicados")
         for tabla, stats in problemas_staging:
-            print(
-                f"  {tabla}: total={stats['total']} | rechazados={stats['rechazados']} | duplicados={stats['duplicados']}"
-            )
+            LoggerManager.warning(f"  {tabla}: total={stats['total']} | rechazados={stats['rechazados']} | duplicados={stats['duplicados']}")
 
-    print("\nCarga DWH:")
+    LoggerManager.info("Carga DWH")
     for tabla in TABLAS_DWH:
         stats = reporte.get(tabla)
         if not stats:
             continue
         transformacion = stats["transformacion"]
         insercion = stats["insercion"]
-        print(
-            f"  {tabla}: válidos={transformacion['válidos']} | "
-            f"duplicados={transformacion['duplicados']} | insertados={insercion['insertados']} | "
-            f"errores={insercion['errores']} | final={stats['final']}"
-        )
+        LoggerManager.info(f"  {tabla}: válidos={transformacion['válidos']} | duplicados={transformacion['duplicados']} | insertados={insercion['insertados']} | errores={insercion['errores']} | final={stats['final']}")
 
     total_insertados = sum(
         stats["insercion"]["insertados"]
@@ -1692,16 +1638,14 @@ def imprimir_reporte(reporte: Dict) -> None:
         and "insercion" in stats
     )
 
-    print("\nResumen general:")
-    LoggerManager.info(f"Total insertados en DWH: {total_insertados}")
-    LoggerManager.info(f"Total errores de inserción en DWH: {total_errores}")
+    LoggerManager.info(f"Resumen general: Total insertados en DWH: {total_insertados} | Total errores de inserción en DWH: {total_errores}")
 
     if total_errores == 0:
         LoggerManager.info("Transformación dimensional completada exitosamente")
     else:
         LoggerManager.warning("Transformación dimensional completada con errores")
-
-    print(f"\nLog guardado en: {LoggerManager.obtener_ruta_logs()}")
+        
+    LoggerManager.info(f"Log guardado en: {LoggerManager.obtener_ruta_logs()}")
 
     # Registrar marca de agua para el proceso incremental.
     # Sin esto, el incremental vería TODOS los registros de staging como delta

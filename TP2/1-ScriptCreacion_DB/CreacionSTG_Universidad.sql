@@ -156,8 +156,7 @@ CREATE TABLE stg_evaluacion_curso (
     puntaje_contenido_raw VARCHAR(50) NULL,
     valoracion_general_raw VARCHAR(50) NULL,
     INDEX IX_stg_eval_id (id_evaluacion_raw),
-    INDEX IX_stg_eval_dictado (id_dictado_raw),
-    INDEX IX_stg_eval_estudiante (id_estudiante_raw)
+    INDEX IX_stg_eval_dictado (id_dictado_raw)
 ) ENGINE=InnoDB;
 
 CREATE TABLE stg_estudiantes_repetidos (

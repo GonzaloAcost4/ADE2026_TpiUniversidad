@@ -43,7 +43,6 @@ if str(CARGA_INICIAL_DIR) not in sys.path:
 from logging_config import LoggerManager
 
 # Carga dinamica para evitar error de resolucion en el import de transformacion.
-# no se pq me tiraba error la importacion directa, asi que lo hago dinamico y fue pq supuestamente esto anda.
 _transformacion_path = CARGA_INICIAL_DIR / "transformacion.py"
 _transformacion_spec = importlib.util.spec_from_file_location(
     "transformacion", _transformacion_path
@@ -53,8 +52,9 @@ if _transformacion_spec is None or _transformacion_spec.loader is None:
 base_etl = importlib.util.module_from_spec(_transformacion_spec)
 _transformacion_spec.loader.exec_module(base_etl)
 
+LoggerManager.reiniciar()
 logger = LoggerManager.configurar(
-    "carga_incremental",
+    "CargaIncremental",
     ruta_raiz=str(SCRIPT_DIR),
     carpeta_logs="logs",
 )
@@ -474,7 +474,6 @@ def actualizar_dimension_scd1(
     with base_etl.engine_dwh.begin() as conn:
         conn.execute(query, parametros)
 
-
 def aplicar_scd_estudiante(dim_estudiante_delta: pd.DataFrame) -> Dict[str, int]:
     columnas_scd2 = [
         "nombrePrograma",
@@ -497,7 +496,6 @@ def aplicar_scd_estudiante(dim_estudiante_delta: pd.DataFrame) -> Dict[str, int]
         columnas_scd2=columnas_scd2,
         columnas_scd1=columnas_scd1,
     )
-
 
 def aplicar_scd_dictado(dim_dictado_delta: pd.DataFrame) -> Dict[str, int]:
     columnas_scd2 = [
@@ -713,31 +711,31 @@ def procesar_incremental() -> Dict:
     4) Actualiza dimensiones con SCD1/SCD2.
     5) Inserta hechos con INSERT IGNORE y consolida exámenes cuando aplica.
     """
-    print("\n=== Carga incremental simulada STG -> DWH ===")
+    logger.info("=== Carga incremental simulada STG -> DWH ===")
     ultima = obtener_ultima_extraccion()
     inicio_ejecucion = datetime.now().isoformat()
     ejecucion_id = registrar_inicio_ejecucion(ultima)
 
     try:
-        print(f"Última extracción registrada: {ultima or 'sin registro previo'}")
+        logger.info(f"Última extracción registrada: {ultima or 'sin registro previo'}")
 
         deltas_raw: Dict[str, pd.DataFrame] = {}
         deltas_limpios: Dict[str, pd.DataFrame] = {}
         stats_limpieza: Dict[str, Dict] = {}
 
-        print("[1/4] Detectando deltas en staging...")
+        logger.info("[1/4] Detectando deltas en staging...")
         for clave, tabla in TABLAS_STAGING.items():
             df_delta = leer_delta_staging(tabla, ultima)
             deltas_raw[clave] = df_delta
             if not df_delta.empty:
-                print(f"  {tabla}: {len(df_delta)} registros delta")
+                logger.info(f"  {tabla}: {len(df_delta)} registros delta")
 
         if all(df.empty for df in deltas_raw.values()):
-            print("No se detectaron cambios para procesar.")
+            logger.info("No se detectaron cambios para procesar.")
             registrar_fin_ejecucion(ejecucion_id, inicio_ejecucion, 0, "OK")
             return {"cambios": 0}
 
-        print("[2/4] Limpiando y normalizando deltas...")
+        logger.info("[2/4] Limpiando y normalizando deltas...")
         for clave, df_raw in deltas_raw.items():
             if df_raw.empty:
                 deltas_limpios[clave] = pd.DataFrame()
@@ -745,7 +743,7 @@ def procesar_incremental() -> Dict:
             deltas_limpios[clave], stats = limpiar_delta(clave, df_raw)
             stats_limpieza[clave] = stats
             if stats["rechazados"] > 0 or stats["duplicados"] > 0:
-                print(
+                logger.warning(
                     f"  Atención {TABLAS_STAGING[clave]}: rechazados={stats['rechazados']} | duplicados={stats['duplicados']}"
                 )
 
@@ -784,7 +782,7 @@ def procesar_incremental() -> Dict:
 
         lookups = construir_lookups_completos()
 
-        print("[3/4] Aplicando dimensiones incrementales...")
+        logger.info("[3/4] Aplicando dimensiones incrementales...")
         fechas_tiempo = []
         if not deltas_limpios.get("inscripciones", pd.DataFrame()).empty:
             fechas_tiempo.extend(
@@ -817,13 +815,13 @@ def procesar_incremental() -> Dict:
             )
         scd_dictado = aplicar_scd_dictado(dim_dictado_delta)
 
-        print(
+        logger.info(
             f"  Tiempo insertados={tiempo_insertados} | "
             f"Estudiante nuevos={scd_estudiante['insertados']} scd2={scd_estudiante['actualizados_scd2']} scd1={scd_estudiante['actualizados_scd1']} | "
             f"Dictado nuevos={scd_dictado['insertados']} scd2={scd_dictado['actualizados_scd2']} scd1={scd_dictado['actualizados_scd1']}"
         )
 
-        print("[4/4] Insertando hechos incrementales...")
+        logger.info("[4/4] Insertando hechos incrementales...")
         mapa_estudiante = base_etl.obtener_mapa_estudiante()
         mapa_dictado = base_etl.obtener_mapa_dictado()
         mapa_tiempo = base_etl.obtener_mapa_tiempo()
@@ -918,7 +916,7 @@ def procesar_incremental() -> Dict:
                 fact_evaluacion, "fact_evaluacion_dictado"
             )
 
-        print(
+        logger.info(
             f"  fact_inscripcion={hechos_insertados['fact_inscripcion']} | "
             f"fact_examen_estudiante={hechos_insertados['fact_examen_estudiante']} | "
             f"fact_evaluacion_dictado={hechos_insertados['fact_evaluacion_dictado']}"
@@ -927,8 +925,8 @@ def procesar_incremental() -> Dict:
         total_delta = sum(len(df) for df in deltas_raw.values())
         registrar_fin_ejecucion(ejecucion_id, inicio_ejecucion, total_delta, "OK")
 
-        print("\n[OK] Carga incremental simulada finalizada")
-        print("Auditoria actualizada en base de datos")
+        logger.info("[OK] Carga incremental simulada finalizada")
+        logger.info("Auditoria actualizada en base de datos")
 
         return {
             "registros_delta": total_delta,
@@ -938,6 +936,7 @@ def procesar_incremental() -> Dict:
             "hechos_insertados": hechos_insertados,
         }
     except Exception as exc:
+        logger.error(f"Error en carga incremental: {str(exc)}", exc_info=True)
         registrar_fin_ejecucion(
             ejecucion_id,
             inicio_ejecucion,
