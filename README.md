@@ -145,6 +145,7 @@ La fecha se estima así:
 
 ## Ejecución del proyecto
 
+
 ## 1. Requisitos
 - Python 3.10+
 - Docker Desktop o una instalación local de MySQL 8
@@ -207,6 +208,76 @@ docker compose up --build -d
 ### Verificar bases creadas
 ```bash
 docker exec mysql_container mysql -uroot -proot123 -e "SHOW DATABASES;"
+```
+
+---
+
+## Ejecutar la carga incremental dentro de Docker usando cron
+
+A continuación se explica cómo ejecutar `TP2/3-ETL_Incremental/carga_incremental.py` dentro de un contenedor Docker y programarlo para que se ejecute diariamente a las 22:00 con `cron`.
+
+### 1) Archivos que necesitas en la raíz del proyecto
+- `run_incremental.sh` (ya creado por el setup script). Si no lo tenés, generalo con el contenido del runner.
+- `TP2/3-ETL_Incremental/carga_incremental.py` (script de carga incremental).
+- `.env` con variables DB en la raíz del proyecto (las mismas que usan los scripts): DB_USER, DB_PASSWORD, DB_HOST, DB_PORT, STG_DATABASE, DWH_DATABASE.
+
+### 2) Dockerfile de ejemplo (crear `Dockerfile.cron` en la raíz)
+
+```dockerfile
+FROM python:3.10-slim
+
+# Instalar cron y dependencias del sistema
+RUN apt-get update && apt-get install -y cron gcc default-libmysqlclient-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Crear directorio de trabajo
+WORKDIR /app
+
+# Copiar el proyecto al contenedor
+COPY . /app
+
+# Instalar dependencias Python (ajustar si usás requirements)
+RUN pip install --no-cache-dir -r TP2/requirements.txt
+
+# Copiar y dar permisos al runner
+RUN chmod +x /app/run_incremental.sh
+
+# Añadir job de cron: ejecutar run_incremental.sh todos los días a las 22:00
+RUN echo "0 22 * * * /app/run_incremental.sh >> /app/TP2/3-ETL_Incremental/logs/incremental_cron.log 2>&1" > /etc/cron.d/etl_incremental
+RUN chmod 0644 /etc/cron.d/etl_incremental
+RUN crontab /etc/cron.d/etl_incremental
+
+# Ejecutar cron en primer plano
+CMD ["/usr/sbin/cron", "-f"]
+```
+
+### 3) Construir la imagen y levantar el contenedor
+```bash
+# Construir
+docker build -f Dockerfile.cron -t etl-cron:latest .
+
+# Ejecutar (montar volumenes si querés persistir logs fuera del contenedor)
+docker run -d --name etl-cron -v "$PWD/TP2/3-ETL_Incremental/logs":/app/TP2/3-ETL_Incremental/logs --env-file .env etl-cron:latest
+```
+
+- El contenedor correrá cron en primer plano y ejecutará `/app/run_incremental.sh` a las 22:00 todos los días.
+- Los logs se escribirán en la carpeta montada `TP2/3-ETL_Incremental/logs` (si usás `-v` como en el ejemplo).
+
+### 4) Verificar que el job se ejecutó
+- Ver archivos de log en la carpeta montada del host, por ejemplo:
+```bash
+ls -ltr TP2/3-ETL_Incremental/logs
+cat TP2/3-ETL_Incremental/logs/incremental_20230517_220000.log
+```
+- También podés ver el log 'incremental_cron.log' dentro del contenedor:
+```bash
+docker logs etl-cron | tail -n 200
+```
+
+### 5) Parar / eliminar contenedor
+```bash
+docker stop etl-cron
+docker rm etl-cron
 ```
 
 ---

@@ -3,6 +3,7 @@ CREATE DATABASE stg_universidad;
 USE stg_universidad;
 
 -- Tabla 1: STG_ESTUDIANTE
+-- id_estudiante,dni,apellido,nombre,genero,fecha_nacimiento,email,telefono,nacionalidad,id_programa,anio_ingreso
 CREATE TABLE stg_estudiante (
     row_id BIGINT AUTO_INCREMENT PRIMARY KEY,
     archivo_origen VARCHAR(255) NULL,
@@ -22,6 +23,7 @@ CREATE TABLE stg_estudiante (
 ) ENGINE=InnoDB;
 
 -- Tabla 2: STG_DOCENTE
+-- id_docente,apellido,nombre,titulo,categoria,dedicacion,id_departamento
 CREATE TABLE stg_docente (
     row_id BIGINT AUTO_INCREMENT PRIMARY KEY,
     archivo_origen VARCHAR(255) NULL,
@@ -37,6 +39,7 @@ CREATE TABLE stg_docente (
 ) ENGINE=InnoDB;
 
 -- Tabla 3: STG_DEPARTAMENTO
+-- id_departamento,nombre,id_facultad
 CREATE TABLE stg_departamento (
     row_id BIGINT AUTO_INCREMENT PRIMARY KEY,
     archivo_origen VARCHAR(255) NULL,
@@ -48,6 +51,7 @@ CREATE TABLE stg_departamento (
 ) ENGINE=InnoDB;
 
 -- Tabla 4: STG_FACULTAD
+-- id_facultad,nombre,ciudad,provincia
 CREATE TABLE stg_facultad (
     row_id BIGINT AUTO_INCREMENT PRIMARY KEY,
     archivo_origen VARCHAR(255) NULL,
@@ -60,6 +64,7 @@ CREATE TABLE stg_facultad (
 ) ENGINE=InnoDB;
 
 -- Tabla 5: STG_PROGRAMA
+-- id_programa,nombre,tipo,duracion_anios,id_facultad
 CREATE TABLE stg_programa (
     row_id BIGINT AUTO_INCREMENT PRIMARY KEY,
     archivo_origen VARCHAR(255) NULL,
@@ -73,6 +78,7 @@ CREATE TABLE stg_programa (
 ) ENGINE=InnoDB;
 
 -- Tabla 6: STG_CURSO
+-- id_curso,codigo,nombre,horas_teorica,horas_ejercicios,horas_laboratorio,anio_plan,nivel
 CREATE TABLE stg_curso (
     row_id BIGINT AUTO_INCREMENT PRIMARY KEY,
     archivo_origen VARCHAR(255) NULL,
@@ -89,6 +95,7 @@ CREATE TABLE stg_curso (
 ) ENGINE=InnoDB;
 
 -- Tabla 7: STG_CURSO_PROGRAMA
+-- id_curso,id_programa
 CREATE TABLE stg_curso_programa (
     row_id BIGINT AUTO_INCREMENT PRIMARY KEY,
     archivo_origen VARCHAR(255) NULL,
@@ -100,6 +107,7 @@ CREATE TABLE stg_curso_programa (
 ) ENGINE=InnoDB;
 
 -- Tabla 8: STG_DICTADO
+-- id_dictado,id_curso,id_docente,id_programa,anio_academico,periodo,turno,aula,cupo_maximo
 CREATE TABLE stg_dictado (
     row_id BIGINT AUTO_INCREMENT PRIMARY KEY,
     archivo_origen VARCHAR(255) NULL,
@@ -131,6 +139,7 @@ CREATE TABLE stg_inscripcion (
 ) ENGINE=InnoDB;
 
 -- Tabla 10: STG_EXAMEN
+-- id_examen,id_inscripcion,fecha,nota,numero_intento,resultado
 CREATE TABLE stg_examen (
     row_id BIGINT AUTO_INCREMENT PRIMARY KEY,
     archivo_origen VARCHAR(255) NULL,
@@ -146,6 +155,7 @@ CREATE TABLE stg_examen (
 ) ENGINE=InnoDB;
 
 -- Tabla 11: STG_EVALUACION_CURSO
+-- id_evaluacion,id_dictado,puntaje_dictado,puntaje_contenido,valoracion_general
 CREATE TABLE stg_evaluacion_curso (
     row_id BIGINT AUTO_INCREMENT PRIMARY KEY,
     archivo_origen VARCHAR(255) NULL,
@@ -161,7 +171,15 @@ CREATE TABLE stg_evaluacion_curso (
 ) ENGINE=InnoDB;
 
 
-CREATE TABLE stg_reg_repetidos (
+CREATE TABLE stg_estudiantes_repetidos (
+    row_id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    archivo_origen VARCHAR(255) NULL,
+    fecha_carga DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    id_repetido VARCHAR(50) NULL,
+    id_tomado VARCHAR(50) NULL
+) ENGINE=InnoDB;
+
+CREATE TABLE stg_inscripciones_repetidas (
     row_id BIGINT AUTO_INCREMENT PRIMARY KEY,
     archivo_origen VARCHAR(255) NULL,
     fecha_carga DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,

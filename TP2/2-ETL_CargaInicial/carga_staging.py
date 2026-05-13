@@ -1,7 +1,12 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[1]:
+"""
+ETL Carga Staging - Carga CSV → stg_universidad
+
+Lee los archivos CSV desde Sources y los carga en las tablas staging
+con estrategia TRUNCATE + Full Load (idempotente).
+"""
 
 import os
 import sys
@@ -29,7 +34,7 @@ DATABASE = os.getenv("STG_DATABASE")
 # Crear motor de conexión
 engine = create_engine(f"mysql+pymysql://{USER}:{PASSWORD}@{HOST}:{PORT}/{DATABASE}")
 
-# Configurar logger para este proceso (logs en carpeta actual: 3-ETL_CargaInicial/logs)
+# Configurar logger para este proceso (logs en carpeta actual: 2-ETL_CargaInicial/logs)
 logger = LoggerManager.configurar(
     "carga_staging", ruta_raiz=os.getcwd(), carpeta_logs="logs"
 )
@@ -41,20 +46,37 @@ RUTA_SOURCES = os.path.abspath(RUTA_SOURCES)
 # Obtener ruta de logs (creada automáticamente por LoggerManager)
 RUTA_LOGS = LoggerManager.obtener_ruta_logs()
 
-
-# In[2]:
+# ============================================
+# MAPEO DE ARCHIVOS CSV A TABLAS STAGING
+# ============================================
+# Se define aquí una sola vez para reutilizar en diagnóstico, carga y validación
+ARCHIVOS_A_PROCESAR = {
+    "estudiante.csv": "stg_estudiante",
+    "docente.csv": "stg_docente",
+    "dictado.csv": "stg_dictado",
+    "inscripcion.csv": "stg_inscripcion",
+    "examen.csv": "stg_examen",
+    "evaluacion_curso.csv": "stg_evaluacion_curso",
+    "facultad.csv": "stg_facultad",
+    "departamento.csv": "stg_departamento",
+    "programa.csv": "stg_programa",
+    "curso.csv": "stg_curso",
+    "curso_programa.csv": "stg_curso_programa",
+}
 
 
 def enriquecer_evaluacion_curso(df):
     """
-    Completa evaluacion_curso.csv con los datos mínimos que requiere el DWH.
+    Completa evaluacion_curso.csv con la fecha de evaluación.
 
-    El CSV original tiene evaluación a nivel dictado. Como la granularidad del
-    hecho es dictado + fecha, solo se enriquece `fecha_evaluacion`.
+    La evaluación es ANÓNIMA, por lo que NO se asigna id_estudiante.
 
-    Regla:
-    - si existe calendario del dictado: C1 -> 15/07 del año académico, C2 -> 15/12
-    - si no, se usa la primera fecha_inscripcion del dictado + 90 días
+    Solo se enriquece fecha_evaluacion usando el período y año académico del dictado:
+    - C1 -> 15/07 del año académico
+    - C2 -> 15/12 del año académico
+
+    Si no se encuentra el dictado, usa la fecha actual como fallback para garantizar
+    que NO sea NULL.
     """
     if df.empty:
         return df
@@ -62,59 +84,57 @@ def enriquecer_evaluacion_curso(df):
     if "fecha_evaluacion" in df.columns:
         return df
 
-    ruta_inscripciones = os.path.join(RUTA_SOURCES, "inscripcion.csv")
     ruta_dictados = os.path.join(RUTA_SOURCES, "dictado.csv")
 
-    evaluaciones = df.copy()
-
+    # Mapear fecha por dictado basado en período y año académico
     fecha_por_dictado = {}
     if os.path.exists(ruta_dictados):
-        dictados = pd.read_csv(ruta_dictados, sep=",", dtype=str)
-        for _, row in dictados.iterrows():
-            anio = str(row.get("anio_academico", "")).strip()
-            periodo = str(row.get("periodo", "")).strip().upper()
-            if anio.isdigit():
-                if periodo in {"C1", "1", "P1", "PRIMER", "PRIMERO"}:
-                    fecha_por_dictado[str(row["id_dictado"])] = f"{anio}-07-15"
-                elif periodo in {"C2", "2", "P2", "SEGUNDO"}:
-                    fecha_por_dictado[str(row["id_dictado"])] = f"{anio}-12-15"
+        try:
+            dictados = pd.read_csv(ruta_dictados, sep=",", dtype=str)
+            for _, row in dictados.iterrows():
+                id_dictado = str(row.get("id_dictado", "")).strip()
+                anio = str(row.get("anio_academico", "")).strip()
+                periodo = str(row.get("periodo", "")).strip().upper()
 
-    fecha_fallback_por_dictado = {}
-    if os.path.exists(ruta_inscripciones):
-        inscripciones = pd.read_csv(ruta_inscripciones, sep=",", dtype=str)
-        if not inscripciones.empty and {"id_dictado", "fecha_inscripcion"}.issubset(
-            inscripciones.columns
-        ):
-            inscripciones["fecha_inscripcion"] = pd.to_datetime(
-                inscripciones["fecha_inscripcion"], errors="coerce"
-            )
-            primeras = (
-                inscripciones.dropna(subset=["fecha_inscripcion"])
-                .groupby("id_dictado", as_index=False)["fecha_inscripcion"]
-                .min()
-            )
-            for _, row in primeras.iterrows():
-                fecha_fallback_por_dictado[str(row["id_dictado"])] = (
-                    (row["fecha_inscripcion"] + timedelta(days=90)).date().isoformat()
-                )
+                if id_dictado and anio.isdigit():
+                    if periodo in {"C1", "1", "P1", "PRIMER", "PRIMERO"}:
+                        fecha_por_dictado[id_dictado] = f"{anio}-07-15"
+                    elif periodo in {"C2", "2", "P2", "SEGUNDO"}:
+                        fecha_por_dictado[id_dictado] = f"{anio}-12-15"
+        except Exception as e:
+            LoggerManager.warning(f"No se pudo leer dictado.csv: {e}")
+    else:
+        LoggerManager.warning("Archivo dictado.csv no encontrado para calcular fechas")
 
     def calcular_fecha_evaluacion(row):
-        id_dictado = str(row.get("id_dictado", ""))
-        return fecha_por_dictado.get(id_dictado) or fecha_fallback_por_dictado.get(
-            id_dictado
-        )
+        """Calcula fecha para evaluación anónima."""
+        id_dictado = str(row.get("id_dictado", "")).strip()
 
+        # Intentar usar fecha del calendario académico
+        if id_dictado in fecha_por_dictado:
+            return fecha_por_dictado[id_dictado]
+
+        # Fallback: usar fecha actual si no se puede determinar
+        return datetime.now().date().isoformat()
+
+    evaluaciones = df.copy()
     evaluaciones["fecha_evaluacion"] = evaluaciones.apply(
         calcular_fecha_evaluacion, axis=1
     )
 
-    sin_fecha = evaluaciones["fecha_evaluacion"].isna().sum()
-    if sin_fecha > 0:
+    # Verificar que no haya nulls
+    nulos = evaluaciones["fecha_evaluacion"].isna().sum()
+    if nulos > 0:
         LoggerManager.warning(
-            f"Evaluaciones sin fecha asignable por falta de calendario o inscripciones: {sin_fecha}"
+            f"Se encontraron {nulos} fechas NULL (reemplazadas con hoy)"
         )
+        evaluaciones.loc[
+            evaluaciones["fecha_evaluacion"].isna(), "fecha_evaluacion"
+        ] = datetime.now().date().isoformat()
 
-    LoggerManager.info("evaluacion_curso enriquecido con fecha_evaluacion")
+    LoggerManager.info(
+        f"evaluacion_curso enriquecido: {len(evaluaciones)} registros con fecha_evaluacion (anónimo)"
+    )
     return evaluaciones
 
 
@@ -179,106 +199,99 @@ def cargar_csv_a_staging(archivo_csv, nombre_tabla_stg):
         return False
 
 
-# In[3]:
+def diagnostico_pre_carga():
+    """
+    Verifica que todos los archivos CSV existen y las tablas staging están creadas.
+    Retorna True si todo está OK, False si hay problemas.
+    """
+    diagnostico_ok = True
 
+    # 1. Verificar archivos CSV
+    LoggerManager.info("\nVerificando archivos en Sources:")
+    archivos_faltantes = []
+    for csv in ARCHIVOS_A_PROCESAR.keys():
+        ruta = os.path.join(RUTA_SOURCES, csv)
+        existe = os.path.exists(ruta)
+        status = "[OK]" if existe else "[ERROR]"
+        LoggerManager.info(f"{status} {csv}")
+        if existe:
+            size = os.path.getsize(ruta) / 1024  # KB
+            logger.info(f"Archivo encontrado: {csv} ({size:.2f} KB)")
+        else:
+            LoggerManager.warning(f"Archivo faltante: {csv}")
+            archivos_faltantes.append(csv)
+            diagnostico_ok = False
 
-# ============================================
-# MAPEO DE ARCHIVOS CSV A TABLAS STAGING
-# ============================================
-# Se define aquí una sola vez para reutilizar en diagnóstico, carga y validación
-archivos_a_procesar = {
-    "estudiante.csv": "stg_estudiante",
-    "docente.csv": "stg_docente",
-    "dictado.csv": "stg_dictado",
-    "inscripcion.csv": "stg_inscripcion",
-    "examen.csv": "stg_examen",
-    "evaluacion_curso.csv": "stg_evaluacion_curso",
-    "facultad.csv": "stg_facultad",
-    "departamento.csv": "stg_departamento",
-    "programa.csv": "stg_programa",
-    "curso.csv": "stg_curso",
-    "curso_programa.csv": "stg_curso_programa",
-}
+    # 2. Verificar tablas en MySQL
+    tablas_faltantes = []
+    try:
+        with engine.connect() as conn:
+            for tabla in ARCHIVOS_A_PROCESAR.values():
+                try:
+                    query = text(f"SELECT COUNT(*) FROM {tabla}")
+                    conn.execute(query)
+                    LoggerManager.info(f"Tabla existe: {tabla}")
+                except Exception:
+                    print(f"[ERROR] {tabla} NO existe - Necesita ser creada!")
+                    LoggerManager.error(f"Tabla no existe: {tabla}")
+                    tablas_faltantes.append(tabla)
+                    diagnostico_ok = False
+    except Exception as e:
+        LoggerManager.error(f"Error conexión MySQL: {e}")
+        diagnostico_ok = False
 
-# In[4]:
-
-# ============================================
-# DIAGNÓSTICO PRE-CARGA
-# ============================================
-# Verificar que TODO está listo ANTES de intentar cargar
-diagnóstico_ok = True
-
-# 1. Verificar archivos CSV
-LoggerManager.info("\nVerificando archivos en Sources:")
-archivos_faltantes = []
-for csv in archivos_a_procesar.keys():
-    ruta = os.path.join(RUTA_SOURCES, csv)
-    existe = os.path.exists(ruta)
-    status = "[OK]" if existe else "[ERROR]"
-    LoggerManager.info(f"{status} {csv}")
-    if existe:
-        size = os.path.getsize(ruta) / 1024  # KB
-        logger.info(f"Archivo encontrado: {csv} ({size:.2f} KB)")
+    # Resumen del diagnóstico
+    if diagnostico_ok:
+        LoggerManager.info("Diagnóstico OK: Procediendo a carga")
     else:
-        LoggerManager.warning(f"Archivo faltante: {csv}")
-        archivos_faltantes.append(csv)
-        diagnóstico_ok = False
-
-# 2. Verificar tablas en MySQL
-tablas_faltantes = []
-try:
-    with engine.connect() as conn:
-        for tabla in archivos_a_procesar.values():
-            try:
-                query = text(f"SELECT COUNT(*) FROM {tabla}")
-                conn.execute(query)
-                LoggerManager.info(f"Tabla existe: {tabla}")
-            except Exception:
-                print(f"[ERROR] {tabla} NO existe - Necesita ser creada!")
-                LoggerManager.error(f"Tabla no existe: {tabla}")
-                tablas_faltantes.append(tabla)
-                diagnóstico_ok = False
-except Exception as e:
-    LoggerManager.error(f"Error conexión MySQL: {e}")
-    diagnóstico_ok = False
-
-# Resumen del diagnóstico
-if diagnóstico_ok:
-    LoggerManager.info("Diagnóstico OK: Procediendo a carga")
-else:
-    LoggerManager.warning("Diagnóstico detectó problemas - revisar antes de proceder")
-    if archivos_faltantes:
         LoggerManager.warning(
-            f"  - Archivos faltantes: {', '.join(archivos_faltantes)}"
+            "Diagnóstico detectó problemas - revisar antes de proceder"
         )
-    if tablas_faltantes:
-        LoggerManager.warning(f"  - Tablas faltantes: {', '.join(tablas_faltantes)}")
+        if archivos_faltantes:
+            LoggerManager.warning(
+                f"  - Archivos faltantes: {', '.join(archivos_faltantes)}"
+            )
+        if tablas_faltantes:
+            LoggerManager.warning(
+                f"  - Tablas faltantes: {', '.join(tablas_faltantes)}"
+            )
+
+    return diagnostico_ok
 
 
-# In[5]:
+def ejecutar_carga_staging():
+    """
+    Punto de entrada principal: diagnóstico + carga completa de CSVs a staging.
+    Retorna un dict con los resultados de cada archivo.
+    """
+    print("\n=== Carga Staging: CSV -> stg_universidad ===", flush=True)
+
+    diagnostico_pre_carga()
+
+    LoggerManager.info("Iniciando proceso de carga")
+
+    resultados = {}
+    for csv, tabla in ARCHIVOS_A_PROCESAR.items():
+        LoggerManager.info(f"Procesando {csv} -> {tabla}")
+        resultados[csv] = cargar_csv_a_staging(csv, tabla)
+
+    exitosos = sum(1 for v in resultados.values() if v)
+    fallidos = len(resultados) - exitosos
+
+    LoggerManager.info(f"Carga finalizada: {exitosos} exitosos, {fallidos} fallidos")
+    LoggerManager.info(f"Exitosos: {exitosos}")
+    LoggerManager.info(f"Fallidos: {fallidos}")
+
+    if fallidos > 0:
+        LoggerManager.warning("\nArchivos con fallo:")
+        for csv, resultado in resultados.items():
+            if not resultado:
+                LoggerManager.error(f"Fallo en carga de {csv}")
+    else:
+        LoggerManager.info("Carga completada exitosamente")
+
+    return resultados
 
 
-# ============================================
-# EJECUCIÓN DE CARGA IDEMPOTENTE
-# ============================================
-LoggerManager.info("Iniciando proceso de carga")
-
-resultados = {}
-for csv, tabla in archivos_a_procesar.items():
-    LoggerManager.info(f"Procesando {csv} -> {tabla}")
-    resultados[csv] = cargar_csv_a_staging(csv, tabla)
-
-exitosos = sum(1 for v in resultados.values() if v)
-fallidos = len(resultados) - exitosos
-
-LoggerManager.info(f"Carga finalizada: {exitosos} exitosos, {fallidos} fallidos")
-LoggerManager.info(f"Exitosos: {exitosos}")
-LoggerManager.info(f"Fallidos: {fallidos}")
-
-if fallidos > 0:
-    LoggerManager.warning("\nArchivos con fallo:")
-    for csv, resultado in resultados.items():
-        if not resultado:
-            LoggerManager.error(f"Fallo en carga de {csv}")
-else:
-    LoggerManager.info("Carga completada exitosamente")
+if __name__ == "__main__":
+    ejecutar_carga_staging()
