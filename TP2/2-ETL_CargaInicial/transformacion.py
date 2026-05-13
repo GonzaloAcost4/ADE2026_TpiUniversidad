@@ -1344,11 +1344,11 @@ def construir_fact_evaluacion_dictado(
             "valoracion_general": "notaGeneral",
         }
     )
-    resultado, duplicados = quitar_duplicados(
-        resultado, ["dictadoSKey", "tiempoSKey"], keep="last"
-    )
 
-    return resultado, estadisticas(total, len(resultado), duplicados)
+    # NO aplicamos quitar_duplicados por dictadoSKey y tiempoSKey porque 
+    # multiples alumnos pueden evaluar el mismo dictado el mismo día de forma anónima.
+    # La deduplicación por id_evaluacion ya se hizo en transformar_evaluacion_base.
+    return resultado, estadisticas(total, len(resultado), 0)
 
 
 # ============================================
@@ -1702,6 +1702,37 @@ def imprimir_reporte(reporte: Dict) -> None:
         LoggerManager.warning("Transformación dimensional completada con errores")
 
     print(f"\nLog guardado en: {LoggerManager.obtener_ruta_logs()}")
+
+    # Registrar marca de agua para el proceso incremental.
+    # Sin esto, el incremental vería TODOS los registros de staging como delta
+    # porque no tiene referencia de hasta cuándo ya se procesó.
+    try:
+        from datetime import datetime
+        ahora = datetime.now().isoformat()
+        with engine_stg.begin() as conn:
+            conn.execute(text(
+                "CREATE TABLE IF NOT EXISTS etl_auditoria_incremental ("
+                "  id BIGINT AUTO_INCREMENT PRIMARY KEY,"
+                "  inicio DATETIME NOT NULL,"
+                "  fin DATETIME NULL,"
+                "  ultima_extraccion DATETIME NULL,"
+                "  nueva_extraccion DATETIME NULL,"
+                "  estado VARCHAR(20) NOT NULL,"
+                "  registros_delta INT DEFAULT 0,"
+                "  mensaje_error TEXT NULL"
+                ") ENGINE=InnoDB"
+            ))
+            conn.execute(text(
+                "INSERT INTO etl_auditoria_incremental "
+                "(inicio, fin, nueva_extraccion, estado, registros_delta) "
+                "VALUES (:inicio, :fin, :nueva, 'OK', 0)"
+            ), {"inicio": ahora, "fin": ahora, "nueva": ahora})
+        LoggerManager.info(
+            f"Marca de agua incremental registrada: {ahora} "
+            "(el próximo incremental procesará solo registros posteriores a este momento)"
+        )
+    except Exception as exc:
+        LoggerManager.warning(f"No se pudo registrar marca de agua incremental: {exc}")
 
 
 if __name__ == "__main__":
