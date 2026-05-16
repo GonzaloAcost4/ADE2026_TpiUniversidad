@@ -631,14 +631,12 @@ def filtrar_examenes_por_historial(
     inscripciones: pd.DataFrame,
     mapa_estudiante: Dict[int, int],
     mapa_dictado: Dict[int, int],
-    max_intentos: int = 3,
 ) -> Tuple[pd.DataFrame, Dict[str, int]]:
     """
     Caja blanca: aplica la regla de intentos con contexto histórico del DWH.
 
     - Si el alumno ya aprobó, no se aceptan nuevos intentos.
-    - Si ya tiene 3 intentos, se rechazan nuevos.
-    - Si hay lugar, se aceptan intentos en orden cronológico del delta,
+    - Se aceptan intentos en orden cronológico del delta,
       cortando al primer aprobado.
     """
     if examenes.empty:
@@ -670,30 +668,30 @@ def filtrar_examenes_por_historial(
             continue
 
         intentos_previos = int(info.get("intentos", 0))
-        disponibles = max_intentos - intentos_previos
-        if disponibles <= 0:
-            rechazados += len(grupo)
-            continue
 
         # Caja blanca: el numero_intento real debe continuar desde el historial
         # del DWH para no pisar intentos previos en el UPSERT.
         intento_real_actual = intentos_previos + 1
 
         grupo = grupo.sort_values(["fecha", "id_examen"])
+        original_len = len(grupo)
+        grupo = grupo.drop_duplicates(subset=["fecha"], keep="first")
+        rechazados += (original_len - len(grupo))
+        
+        rechazar_resto = False
         for _, fila in grupo.iterrows():
-            if disponibles <= 0:
+            if rechazar_resto:
                 rechazados += 1
                 continue
 
             fila_corregida = fila[columnas_originales].copy()
             fila_corregida["numero_intento"] = intento_real_actual
             aceptados.append(fila_corregida)
-            disponibles -= 1
             intento_real_actual += 1
 
             if str(fila.get("resultado", "")).strip().lower() == "aprobado":
                 # Si aprueba en el delta, no se permiten intentos posteriores.
-                disponibles = 0
+                rechazar_resto = True
 
     if not aceptados:
         return examenes.iloc[0:0].copy(), {"aceptados": 0, "rechazados": rechazados}

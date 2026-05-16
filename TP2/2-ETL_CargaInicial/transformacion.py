@@ -510,7 +510,6 @@ def consolidar_examenes_duplicados(
     Reglas aplicadas únicamente en casos impactados:
     - Reordenar cronológicamente por alumno y dictado.
     - Renumerar `numero_intento` desde 1.
-    - Truncar a máximo 3 intentos por (id_estudiante, id_dictado).
     """
     if examenes.empty:
         LoggerManager.info("Consolidación exámenes: sin exámenes para procesar")
@@ -548,13 +547,14 @@ def consolidar_examenes_duplicados(
     for i, (_, g) in enumerate(grupos, start=1):
         g = g.sort_values(["fecha", "id_examen"]).copy()
         original = len(g)
+        
+        g = g.drop_duplicates(subset=["fecha"], keep="first").copy()
+
         aprobado_mask = g["resultado"].fillna("").str.lower().eq("aprobado")
 
         if aprobado_mask.any():
             primer_aprobado = int(aprobado_mask.to_numpy().argmax())
             g = g.iloc[: primer_aprobado + 1].copy()
-        else:
-            g = g.iloc[:3].copy()
 
         g["numero_intento"] = list(range(1, len(g) + 1))
         eliminados += max(original - len(g), 0)
