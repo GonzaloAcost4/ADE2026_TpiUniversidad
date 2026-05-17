@@ -26,8 +26,6 @@ ADE2026_TpiUniversidad/
 ├── README.md
 ├── docker-compose.yml
 └── TP2/
-    ├── README.md
-    ├── LOGGING_README.md
     ├── logging_config.py
     ├── requirements.txt
     ├── requirements-dev.txt
@@ -37,14 +35,11 @@ ADE2026_TpiUniversidad/
     │   └── CreacionDWH_Universidad.sql
     ├── 2-ETL_CargaInicial/
     │   ├── carga_staging.py
-    │   ├── carga_staging.ipynb
     │   ├── transformacion.py
-    │   ├── transformacion.ipynb
     │   └── README.md
     ├── 3-ETL_Incremental/
-    │   └── carga_incremental.py
-    ├── 4-Web_App/
-    │   └── app.py
+    │   ├── carga_incremental.py
+    │   └── README.md
     └── Sources/
         ├── *.csv
         └── oltp_universidad_erd.html
@@ -167,11 +162,6 @@ source venv/bin/activate
 ### Runtime mínimo
 ```bash
 pip install -r TP2/requirements.txt
-```
-
-### Entorno de desarrollo con notebooks
-```bash
-pip install -r TP2/requirements-dev.txt
 ```
 
 ## 4. Configurar variables de entorno
@@ -303,26 +293,21 @@ python carga_incremental.py
 ```
 
 ### Aplicación web
-Ingresar al directorio `TP2/4-Web_App/` y ejecutar:
 ```bash
-pip install flask sqlalchemy pymysql python-dotenv pandas plotly
-python app.py
+docker run -d -p 3000:3000 --name metabase metabase/metabase
 ```
 
 Luego abrir:
 
 ```text
-http://localhost:5000
+http://localhost:3000
 ```
-
----
-
-## Uso de notebooks
-
-Los notebooks de `2-ETL_CargaInicial` están sincronizados con los scripts `.py` y ejecutan directamente la lógica vigente del proyecto.
-
-- `carga_staging.ipynb`
-- `transformacion.ipynb`
+Le das click a Comenzar y debes configurar la conexión a la base de datos.
+Si se usa Docker se debe colocar en Host la ip del host donde se está ejecutando el contenedor.
+```
+hostname -I # en linux
+ipconfig # en windows
+```
 
 ---
 
@@ -340,4 +325,3 @@ Los logs de ejecución se generan dentro de la carpeta `logs/` de cada proceso E
 
 - `TP2/README.md`: documentación general del TP2
 - `TP2/2-ETL_CargaInicial/README.md`: detalle de la carga inicial y transformación
-- `TP2/LOGGING_README.md`: configuración y uso del sistema de logs

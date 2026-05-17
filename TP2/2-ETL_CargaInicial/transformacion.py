@@ -119,6 +119,16 @@ TABLAS_DWH = [
     "fact_evaluacion_dictado",
 ]
 
+# Mapeo de tablas DWH a tablas de staging origen para comparar conteos
+DWH_TO_STAGING = {
+    "dim_tiempo": ["stg_inscripcion", "stg_examen", "stg_evaluacion_curso"],
+    "dim_estudiante": ["stg_estudiante"],
+    "dim_dictado": ["stg_dictado"],
+    "fact_inscripcion": ["stg_inscripcion"],
+    "fact_examen_estudiante": ["stg_examen"],
+    "fact_evaluacion_dictado": ["stg_evaluacion_curso"],
+}
+
 # Orden de truncado: hechos primero, luego dimensiones
 ORDEN_TRUNCATE = [
     "fact_evaluacion_dictado",
@@ -1690,13 +1700,88 @@ def imprimir_reporte(reporte: Dict) -> None:
         stats = reporte.get(tabla)
         if not stats:
             continue
-        transformacion = stats["transformacion"]
-        insercion = stats["insercion"]
-        print(
-            f"  {tabla}: válidos={transformacion['válidos']} | "
-            f"duplicados={transformacion['duplicados']} | insertados={insercion['insertados']} | "
-            f"errores={insercion['errores']} | final={stats['final']}"
+        transformacion = stats.get("transformacion", {})
+        insercion = stats.get("insercion", {})
+
+        # Calcular totales de staging relevantes para esta tabla DWH
+        fuentes = DWH_TO_STAGING.get(tabla, [])
+        staging_total = 0
+        staging_validos = 0
+        fuentes_presentes = []
+        detalles_fuentes = []
+        for src in fuentes:
+            s = reporte.get("staging_limpieza", {}).get(src)
+            if s:
+                s_total = int(s.get("total", 0))
+                s_validos = int(s.get("válidos", 0))
+                staging_total += s_total
+                staging_validos += s_validos
+                fuentes_presentes.append(src)
+                detalles_fuentes.append(f"{src}(total={s_total}, válidos={s_validos})")
+
+        inserted = int(insercion.get("insertados", 0))
+        errores = int(insercion.get("errores", 0))
+        final = int(stats.get("final", 0))
+        transform_validos = (
+            int(transformacion.get("válidos", 0)) if transformacion else 0
         )
+        transform_duplicados = (
+            int(transformacion.get("duplicados", 0)) if transformacion else 0
+        )
+        transform_rechazados = (
+            int(transformacion.get("rechazados", 0)) if transformacion else 0
+        )
+
+        # Calcular no cargados y porcentajes (respecto a total y a válidos)
+        no_cargados_total = None
+        no_cargados_validos = None
+        pct_loaded_total = None
+        pct_loaded_validos = None
+        if staging_total > 0:
+            no_cargados_total = max(staging_total - inserted, 0)
+            try:
+                pct_loaded_total = (inserted / staging_total) * 100
+            except Exception:
+                pct_loaded_total = None
+        if staging_validos > 0:
+            no_cargados_validos = max(staging_validos - inserted, 0)
+            try:
+                pct_loaded_validos = (inserted / staging_validos) * 100
+            except Exception:
+                pct_loaded_validos = None
+
+        detalles_fuentes_str = (
+            ", ".join(detalles_fuentes) if detalles_fuentes else "N/A"
+        )
+
+        # Imprimir resumen detallado
+        if no_cargados_total is not None and no_cargados_validos is not None:
+            print(
+                f"  {tabla}: fuentes=[{detalles_fuentes_str}] staging_total={staging_total} staging_válidos={staging_validos} | "
+                f"transform_válidos={transform_validos} duplicados={transform_duplicados} rechazados={transform_rechazados} | "
+                f"insertados={inserted} errores={errores} final={final} | "
+                f"no_cargados_total={no_cargados_total} ({pct_loaded_total:.2f}% cargado) | "
+                f"no_cargados_válidos={no_cargados_validos} ({pct_loaded_validos:.2f}% cargado respecto válidos)",
+                flush=True,
+            )
+        elif no_cargados_total is not None:
+            pct_display = (
+                f"{pct_loaded_total:.2f}%" if pct_loaded_total is not None else "N/A"
+            )
+            print(
+                f"  {tabla}: fuentes=[{detalles_fuentes_str}] staging_total={staging_total} | "
+                f"transform_válidos={transform_validos} duplicados={transform_duplicados} rechazados={transform_rechazados} | "
+                f"insertados={inserted} errores={errores} final={final} | "
+                f"no_cargados_total={no_cargados_total} (pct_loaded={pct_display})",
+                flush=True,
+            )
+        else:
+            print(
+                f"  {tabla}: fuentes=[{detalles_fuentes_str}] staging_total=N/A | "
+                f"transform_válidos={transform_validos} duplicados={transform_duplicados} rechazados={transform_rechazados} | "
+                f"insertados={inserted} errores={errores} final={final}",
+                flush=True,
+            )
 
     total_insertados = sum(
         stats["insercion"]["insertados"]
