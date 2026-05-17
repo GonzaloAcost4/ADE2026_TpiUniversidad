@@ -15,7 +15,7 @@ El proyecto incluye:
 - transformación y carga al DWH
 - tratamiento de alumnos duplicados
 - carga incremental simulada
-- aplicación web simple para exploración de datos
+- metabase para visualizacion de datos
 
 ---
 
@@ -70,9 +70,7 @@ ADE2026_TpiUniversidad/
    - `TP2/3-ETL_Incremental/carga_incremental.py`
    - reutiliza la lógica base de transformación
 
-5. **Exploración web**
-   - `TP2/4-Web_App/app.py`
-
+5. **Visualización web**
 ---
 
 ## Modelo de datos actual
@@ -302,7 +300,7 @@ Luego abrir:
 ```text
 http://localhost:3000
 ```
-Le das click a Comenzar y debes configurar la conexión a la base de datos.
+Le das click a Comenzar y debes configurar la conexión a la base de datos.  
 Si se usa Docker se debe colocar en Host la ip del host donde se está ejecutando el contenedor.
 ```
 hostname -I # en linux
