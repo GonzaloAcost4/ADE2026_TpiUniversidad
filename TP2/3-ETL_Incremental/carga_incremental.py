@@ -809,6 +809,7 @@ def procesar_incremental() -> Dict:
                 lookups["cursos"],
                 lookups["docentes"],
                 lookups["departamentos"],
+                lookups["programas"],
                 lookups["facultades"],
             )
         scd_dictado = aplicar_scd_dictado(dim_dictado_delta)

@@ -1069,14 +1069,31 @@ def construir_dim_dictado(
     cursos: pd.DataFrame,
     docentes: pd.DataFrame,
     departamentos: pd.DataFrame,
+    programas: pd.DataFrame,
     facultades: pd.DataFrame,
 ) -> Tuple[pd.DataFrame, Dict]:
     total = len(dictados)
 
+    # JOIN con cursos para datos del curso
     df = dictados.merge(cursos, on="id_curso", how="left")
+    # JOIN con docentes para datos del docente
     df = df.merge(docentes, on="id_docente", how="left")
-    df = df.merge(departamentos, on="id_departamento", how="left")
-    df = df.merge(facultades, on="id_facultad", how="left")
+    # JOIN con departamentos para nombre del departamento (vía docente)
+    df = df.merge(departamentos, on="id_departamento", how="left", suffixes=("", "_dep"))
+    # La facultad se determina por el PROGRAMA del dictado, NO por el departamento
+    # del docente, ya que los docentes pueden dictar en programas de otras facultades.
+    # Cadena correcta: dictado.id_programa → programa.id_facultad → facultad
+    df = df.merge(
+        programas[["id_programa", "id_facultad"]].rename(columns={"id_facultad": "id_facultad_programa"}),
+        on="id_programa",
+        how="left",
+    )
+    df = df.merge(
+        facultades,
+        left_on="id_facultad_programa",
+        right_on="id_facultad",
+        how="left",
+    )
 
     for columna, etiqueta in [
         ("nombre_curso", "curso"),
@@ -1556,6 +1573,7 @@ def ejecutar_transformacion() -> Dict:
         datos["cursos"],
         datos["docentes"],
         datos["departamentos"],
+        datos["programas"],
         datos["facultades"],
     )
 
