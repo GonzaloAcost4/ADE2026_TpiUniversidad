@@ -921,6 +921,10 @@ def procesar_incremental() -> Dict:
             f"fact_evaluacion_dictado={hechos_insertados['fact_evaluacion_dictado']}"
         )
 
+        # Detección de abandono de carrera (post-hechos)
+        logger.info("Detección de abandono de carrera (post-incremental)")
+        abandonos = base_etl.detectar_abandono_carrera()
+
         total_delta = sum(len(df) for df in deltas_raw.values())
         registrar_fin_ejecucion(ejecucion_id, inicio_ejecucion, total_delta, "OK")
 
@@ -933,6 +937,7 @@ def procesar_incremental() -> Dict:
             "scd_estudiante": scd_estudiante,
             "scd_dictado": scd_dictado,
             "hechos_insertados": hechos_insertados,
+            "abandono_carrera": {"desertores_detectados": abandonos},
         }
     except Exception as exc:
         logger.error(f"Error en carga incremental: {str(exc)}", exc_info=True)

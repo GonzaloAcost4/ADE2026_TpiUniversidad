@@ -1437,6 +1437,94 @@ def cargar_tabla(
 
 
 # ============================================
+# DETECCIÓN DE ABANDONO DE CARRERA
+# ============================================
+
+
+def detectar_abandono_carrera() -> int:
+    """
+    Detecta estudiantes que abandonaron la carrera analizando su último
+    periodo académico con inscripciones registradas.
+
+    Criterio: si TODAS las inscripciones del último periodo (año + cuatrimestre)
+    de un alumno terminaron en baja/cancelado/abandono, se considera que
+    abandonó la carrera.
+
+    Ejecuta un UPDATE directo sobre dim_estudiante para marcar:
+      - abandonoCarrera = TRUE
+      - anioAbandono = año del último periodo con actividad
+
+    Retorna la cantidad de estudiantes marcados como desertores.
+    """
+    query_detectar = text("""
+        WITH ultimo_periodo_alumno AS (
+            SELECT
+                f.alumnoSKey,
+                MAX(t.fecha) AS ultima_fecha_inscripcion
+            FROM fact_inscripcion f
+            JOIN dim_tiempo t ON f.tiempoSKey = t.tiempoSKey
+            GROUP BY f.alumnoSKey
+        ),
+        inscripciones_finales AS (
+            SELECT
+                f.alumnoSKey,
+                f.InscripSKey,
+                f.estado,
+                f.abandono,
+                t.ano AS ultimo_ano_activo,
+                t.periodoAcademico AS ultimo_periodo_activo
+            FROM fact_inscripcion f
+            JOIN dim_tiempo t ON f.tiempoSKey = t.tiempoSKey
+            JOIN ultimo_periodo_alumno upA
+                ON f.alumnoSKey = upA.alumnoSKey
+               AND t.fecha = upA.ultima_fecha_inscripcion
+        ),
+        auditoria_bajas_finales AS (
+            SELECT
+                alumnoSKey,
+                ultimo_ano_activo,
+                COUNT(InscripSKey) AS total_materias,
+                COUNT(CASE
+                    WHEN estado LIKE '%baja%'
+                      OR estado LIKE '%cancelado%'
+                      OR abandono = TRUE
+                    THEN 1
+                END) AS total_bajas
+            FROM inscripciones_finales
+            GROUP BY alumnoSKey, ultimo_ano_activo
+        )
+        SELECT alumnoSKey, ultimo_ano_activo
+        FROM auditoria_bajas_finales
+        WHERE total_materias = total_bajas
+    """)
+
+    query_update = text("""
+        UPDATE dim_estudiante
+        SET abandonoCarrera = TRUE,
+            anioAbandono = :anio
+        WHERE alumnoSKey = :sk
+          AND es_actual = TRUE
+    """)
+
+    with engine_dwh.connect() as conn:
+        desertores = conn.execute(query_detectar).fetchall()
+
+    if not desertores:
+        LoggerManager.info("Detección abandono: no se encontraron desertores")
+        return 0
+
+    with engine_dwh.begin() as conn:
+        for sk, anio in desertores:
+            conn.execute(query_update, {"anio": int(anio), "sk": int(sk)})
+
+    LoggerManager.info(
+        f"Detección abandono: {len(desertores)} estudiantes marcados "
+        f"con abandonoCarrera=TRUE"
+    )
+    return len(desertores)
+
+
+# ============================================
 # ORQUESTACIÓN
 # ============================================
 
@@ -1616,7 +1704,14 @@ def ejecutar_transformacion() -> Dict:
         "fact_evaluacion_dictado", fact_evaluacion, reporte, stats_fact_evaluacion
     )
 
-    # 8. Reporte final.
+    # 8. Detección de abandono de carrera.
+    #    Se ejecuta DESPUÉS de cargar hechos porque necesita fact_inscripcion
+    #    para analizar el último periodo de cada estudiante.
+    LoggerManager.info("Detección de abandono de carrera")
+    abandonos = detectar_abandono_carrera()
+    reporte["abandono_carrera"] = {"desertores_detectados": abandonos}
+
+    # 9. Reporte final.
     imprimir_reporte(reporte)
     return reporte
 
@@ -1659,6 +1754,10 @@ def imprimir_reporte(reporte: Dict) -> None:
     )
 
     LoggerManager.info(f"Resumen general: Total insertados en DWH: {total_insertados} | Total errores de inserción en DWH: {total_errores}")
+
+    abandono_stats = reporte.get("abandono_carrera", {})
+    if abandono_stats:
+        LoggerManager.info(f"  Abandono carrera: desertores detectados={abandono_stats.get('desertores_detectados', 0)}")
 
     if total_errores == 0:
         LoggerManager.info("Transformación dimensional completada exitosamente")
