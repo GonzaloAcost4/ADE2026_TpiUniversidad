@@ -1443,59 +1443,62 @@ def cargar_tabla(
 
 def detectar_abandono_carrera() -> int:
     """
-    Detecta estudiantes que abandonaron la carrera analizando su último
-    periodo académico con inscripciones registradas.
+    Detecta estudiantes que abandonaron la carrera analizando su rendimiento
+    por cuatrimestre (año + periodoAcademico).
 
-    Criterio: si TODAS las inscripciones del último periodo (año + cuatrimestre)
-    de un alumno terminaron en baja/cancelado/abandono, se considera que
-    abandonó la carrera.
+    Criterio: si TODAS las inscripciones del último cuatrimestre registrado
+    de un alumno terminaron en baja, cancelado, libre o abandono, se considera
+    que abandonó la carrera.
+
+    La detección agrupa por (año, periodoAcademico) para tratar C1 y C2
+    como bloques independientes. Incluye 'libre' como estado de pérdida.
+    Solo marca abandono si el ÚLTIMO cuatrimestre del alumno es 100% perdido,
+    evitando falsos positivos de alumnos que tuvieron un mal cuatrimestre
+    pero volvieron a inscribirse después.
 
     Ejecuta un UPDATE directo sobre dim_estudiante para marcar:
       - abandonoCarrera = TRUE
-      - anioAbandono = año del último periodo con actividad
+      - anioAbandono = año del último cuatrimestre con actividad
 
     Retorna la cantidad de estudiantes marcados como desertores.
     """
     query_detectar = text("""
-        WITH ultimo_periodo_alumno AS (
+        WITH rendimiento_por_cuatrimestre AS (
             SELECT
                 f.alumnoSKey,
-                MAX(t.fecha) AS ultima_fecha_inscripcion
-            FROM fact_inscripcion f
-            JOIN dim_tiempo t ON f.tiempoSKey = t.tiempoSKey
-            GROUP BY f.alumnoSKey
-        ),
-        inscripciones_finales AS (
-            SELECT
-                f.alumnoSKey,
-                f.InscripSKey,
-                f.estado,
-                f.abandono,
-                t.ano AS ultimo_ano_activo,
-                t.periodoAcademico AS ultimo_periodo_activo
-            FROM fact_inscripcion f
-            JOIN dim_tiempo t ON f.tiempoSKey = t.tiempoSKey
-            JOIN ultimo_periodo_alumno upA
-                ON f.alumnoSKey = upA.alumnoSKey
-               AND t.fecha = upA.ultima_fecha_inscripcion
-        ),
-        auditoria_bajas_finales AS (
-            SELECT
-                alumnoSKey,
-                ultimo_ano_activo,
-                COUNT(InscripSKey) AS total_materias,
+                t.ano,
+                t.periodoAcademico,
+                MAX(t.fecha) AS max_fecha_periodo,
+                COUNT(f.InscripSKey) AS total_materias_inscriptas,
                 COUNT(CASE
-                    WHEN estado LIKE '%baja%'
-                      OR estado LIKE '%cancelado%'
-                      OR abandono = TRUE
+                    WHEN f.estado LIKE '%baja%'
+                      OR f.estado LIKE '%cancelado%'
+                      OR f.estado LIKE '%libre%'
+                      OR f.abandono = 1
                     THEN 1
-                END) AS total_bajas
-            FROM inscripciones_finales
-            GROUP BY alumnoSKey, ultimo_ano_activo
+                END) AS total_materias_perdidas
+            FROM fact_inscripcion f
+            JOIN dim_tiempo t ON f.tiempoSKey = t.tiempoSKey
+            GROUP BY f.alumnoSKey, t.ano, t.periodoAcademico
+        ),
+        ultimo_cuatrimestre_alumno AS (
+            SELECT alumnoSKey, MAX(max_fecha_periodo) AS ultima_fecha
+            FROM rendimiento_por_cuatrimestre
+            GROUP BY alumnoSKey
+        ),
+        cuatrimestre_final_critico AS (
+            SELECT
+                r.alumnoSKey,
+                r.ano
+            FROM rendimiento_por_cuatrimestre r
+            JOIN ultimo_cuatrimestre_alumno u
+                ON r.alumnoSKey = u.alumnoSKey
+               AND r.max_fecha_periodo = u.ultima_fecha
+            WHERE r.total_materias_inscriptas = r.total_materias_perdidas
+              AND r.total_materias_inscriptas > 0
         )
-        SELECT alumnoSKey, ultimo_ano_activo
-        FROM auditoria_bajas_finales
-        WHERE total_materias = total_bajas
+        SELECT alumnoSKey, ano
+        FROM cuatrimestre_final_critico
     """)
 
     query_update = text("""
