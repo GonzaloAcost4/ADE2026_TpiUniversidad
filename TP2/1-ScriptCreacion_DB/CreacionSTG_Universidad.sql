@@ -186,3 +186,18 @@ CREATE TABLE stg_inscripciones_repetidas (
     id_repetido VARCHAR(50) NULL,
     id_tomado VARCHAR(50) NULL
 ) ENGINE=InnoDB;
+
+
+CREATE TABLE stg_examen_eliminado (
+    row_id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    archivo_origen VARCHAR(255) NULL,
+    fecha_carga DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    id_examen_raw VARCHAR(50) NULL,
+    id_inscripcion_raw VARCHAR(50) NULL,
+    fecha_raw VARCHAR(80) NULL,
+    nota_raw VARCHAR(50) NULL,
+    numero_intento_raw VARCHAR(50) NULL,
+    resultado_raw VARCHAR(100) NULL,
+    INDEX IX_stg_examen_id (id_examen_raw),
+    INDEX IX_stg_examen_ins (id_inscripcion_raw)
+) ENGINE=InnoDB;

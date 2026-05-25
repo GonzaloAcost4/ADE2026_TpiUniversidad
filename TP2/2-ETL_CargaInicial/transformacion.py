@@ -531,26 +531,43 @@ def consolidar_examenes_duplicados(
     examenes: pd.DataFrame,
     inscripciones: pd.DataFrame,
     mapa_inscripciones_duplicadas: Dict[int, int],
-) -> Tuple[pd.DataFrame, Dict[str, int]]:
+) -> Tuple[pd.DataFrame, pd.DataFrame, Dict[str, int]]:
     """
     Consolida SOLO exámenes asociados a inscripciones duplicadas ya remapeadas
-    (derivadas de estudiantes duplicados).
+    (derivadas de estudiantes duplicados) y retorna los exámenes eliminados.
 
     Reglas aplicadas únicamente en casos impactados:
     - Reordenar cronológicamente por alumno y dictado.
     - Renumerar `numero_intento` desde 1.
-    - Truncar a máximo 3 intentos por (id_estudiante, id_dictado).
     """
+    examenes_vacios = examenes.iloc[0:0].copy()
+
     if examenes.empty:
         print("    [CONSOLIDACIÓN] sin exámenes para procesar", flush=True)
-        return examenes.copy(), {"afectados": 0, "grupos": 0, "eliminados": 0}
+        return (
+            examenes.copy(),
+            examenes_vacios,
+            {
+                "afectados": 0,
+                "grupos": 0,
+                "eliminados": 0,
+            },
+        )
 
     if inscripciones.empty or not mapa_inscripciones_duplicadas:
         print(
             "    [CONSOLIDACIÓN] sin mapa de inscripciones duplicadas, no se consolidan exámenes",
             flush=True,
         )
-        return examenes.copy(), {"afectados": 0, "grupos": 0, "eliminados": 0}
+        return (
+            examenes.copy(),
+            examenes_vacios,
+            {
+                "afectados": 0,
+                "grupos": 0,
+                "eliminados": 0,
+            },
+        )
 
     ins_map = inscripciones[
         ["id_inscripcion", "id_estudiante", "id_dictado"]
@@ -574,7 +591,11 @@ def consolidar_examenes_duplicados(
             "    [CONSOLIDACIÓN] no hay exámenes vinculados a inscripciones duplicadas",
             flush=True,
         )
-        return examenes.copy(), {"afectados": 0, "grupos": 0, "eliminados": 0}
+        return (
+            examenes.copy(),
+            examenes_vacios,
+            {"afectados": 0, "grupos": 0, "eliminados": 0},
+        )
 
     grupos = list(afectados.groupby(["id_estudiante", "id_dictado"], sort=False))
     total_grupos = len(grupos)
@@ -585,20 +606,27 @@ def consolidar_examenes_duplicados(
 
     piezas = []
     eliminados = 0
+    eliminados_detalle = []
     for i, (_, g) in enumerate(grupos, start=1):
-        g = g.sort_values(["fecha", "id_examen"]).copy()
-        original = len(g)
-        aprobado_mask = g["resultado"].fillna("").str.lower().eq("aprobado")
+        g_ordenado = g.sort_values(["fecha", "id_examen"]).copy()
+
+        g_final = g_ordenado.drop_duplicates(subset=["fecha"], keep="first").copy()
+        aprobado_mask = g_final["resultado"].fillna("").str.lower().eq("aprobado")
 
         if aprobado_mask.any():
             primer_aprobado = int(aprobado_mask.to_numpy().argmax())
-            g = g.iloc[: primer_aprobado + 1].copy()
-        else:
-            g = g.iloc[:3].copy()
+            g_final = g_final.iloc[: primer_aprobado + 1].copy()
 
-        g["numero_intento"] = list(range(1, len(g) + 1))
-        eliminados += max(original - len(g), 0)
-        piezas.append(g)
+        g_final["numero_intento"] = list(range(1, len(g_final) + 1))
+
+        eliminados_grupo = g_ordenado[
+            ~g_ordenado["id_examen"].isin(g_final["id_examen"])
+        ].copy()
+        if not eliminados_grupo.empty:
+            eliminados_detalle.append(eliminados_grupo)
+            eliminados += len(eliminados_grupo)
+
+        piezas.append(g_final)
 
         if i % 5000 == 0 or i == total_grupos:
             print(
@@ -613,15 +641,105 @@ def consolidar_examenes_duplicados(
     )
     final = pd.concat([consolidados, no_afectados], ignore_index=True, sort=False)
 
+    eliminados_df = (
+        pd.concat(eliminados_detalle, ignore_index=True, sort=False)
+        if eliminados_detalle
+        else examenes_vacios.copy()
+    )
+
     print(
         f"    [CONSOLIDACIÓN] finalizado | afectados={len(afectados)} | eliminados={eliminados}",
         flush=True,
     )
-    return final[examenes.columns], {
-        "afectados": int(len(afectados)),
-        "grupos": int(total_grupos),
-        "eliminados": int(eliminados),
-    }
+    return (
+        final[examenes.columns],
+        eliminados_df[examenes.columns],
+        {
+            "afectados": int(len(afectados)),
+            "grupos": int(total_grupos),
+            "eliminados": int(eliminados),
+        },
+    )
+
+
+# ============================================
+# CARGA DE EXÁMENES ELIMINADOS (STAGING)
+# ============================================
+
+
+def cargar_examenes_eliminados(
+    examenes_eliminados: pd.DataFrame,
+    examenes_raw: Optional[pd.DataFrame] = None,
+) -> int:
+    """
+    Carga en stg_examen_eliminado los exámenes descartados durante la consolidación.
+    Usa los valores RAW originales cuando están disponibles.
+    """
+    with engine_stg.begin() as conn:
+        conn.execute(text("TRUNCATE TABLE stg_examen_eliminado"))
+
+    if examenes_eliminados is None or examenes_eliminados.empty:
+        LoggerManager.info("stg_examen_eliminado: sin registros para cargar")
+        return 0
+
+    columnas_destino = [
+        "archivo_origen",
+        "id_examen_raw",
+        "id_inscripcion_raw",
+        "fecha_raw",
+        "nota_raw",
+        "numero_intento_raw",
+        "resultado_raw",
+    ]
+
+    if examenes_raw is not None and not examenes_raw.empty:
+        raw = examenes_raw.copy()
+        for col in columnas_destino:
+            if col not in raw.columns:
+                raw[col] = None
+
+        raw["id_examen_limpio"] = raw["id_examen_raw"].apply(
+            lambda x: DataCleaner.limpiar_numero(x, "int")
+        )
+        raw = raw.dropna(subset=["id_examen_limpio"]).drop_duplicates(
+            subset=["id_examen_limpio"], keep="first"
+        )
+
+        carga = examenes_eliminados.merge(
+            raw[["id_examen_limpio"] + columnas_destino],
+            left_on="id_examen",
+            right_on="id_examen_limpio",
+            how="left",
+        )
+        carga = carga[columnas_destino]
+    else:
+        LoggerManager.warning(
+            "stg_examen_eliminado: no se recibió staging raw; se cargan valores limpios"
+        )
+        carga = examenes_eliminados.rename(
+            columns={
+                "id_examen": "id_examen_raw",
+                "id_inscripcion": "id_inscripcion_raw",
+                "fecha": "fecha_raw",
+                "nota": "nota_raw",
+                "numero_intento": "numero_intento_raw",
+                "resultado": "resultado_raw",
+            }
+        )
+        for col in columnas_destino:
+            if col not in carga.columns:
+                carga[col] = None
+        carga = carga[columnas_destino]
+
+    carga.to_sql(
+        name="stg_examen_eliminado",
+        con=engine_stg,
+        if_exists="append",
+        index=False,
+    )
+
+    LoggerManager.info(f"stg_examen_eliminado: {len(carga)} registros cargados")
+    return int(len(carga))
 
 
 # ============================================
@@ -1590,10 +1708,21 @@ def ejecutar_transformacion() -> Dict:
         "  [2.5] Consolidando intentos en casos impactados por duplicados...",
         flush=True,
     )
-    datos["examenes"], stats_consolidacion_examen = consolidar_examenes_duplicados(
-        datos.get("examenes", pd.DataFrame()),
-        datos.get("inscripciones", pd.DataFrame()),
-        mapa_ins_dup,
+    datos["examenes"], examenes_eliminados, stats_consolidacion_examen = (
+        consolidar_examenes_duplicados(
+            datos.get("examenes", pd.DataFrame()),
+            datos.get("inscripciones", pd.DataFrame()),
+            mapa_ins_dup,
+        )
+    )
+
+    registros_eliminados = cargar_examenes_eliminados(
+        examenes_eliminados, datos_raw.get("examenes", pd.DataFrame())
+    )
+    reporte["stg_examen_eliminado"] = {"insertados": int(registros_eliminados)}
+    print(
+        f"  stg_examen_eliminado: cargados={registros_eliminados}",
+        flush=True,
     )
 
     reporte["duplicados"] = {
@@ -1694,6 +1823,13 @@ def imprimir_reporte(reporte: Dict) -> None:
             print(
                 f"  {tabla}: total={stats['total']} | rechazados={stats['rechazados']} | duplicados={stats['duplicados']}"
             )
+
+    registros_eliminados = reporte.get("stg_examen_eliminado", {}).get("insertados")
+    if registros_eliminados is not None:
+        print(
+            f"\nStaging exámenes eliminados: {registros_eliminados} registros cargados",
+            flush=True,
+        )
 
     print("\nCarga DWH:")
     for tabla in TABLAS_DWH:

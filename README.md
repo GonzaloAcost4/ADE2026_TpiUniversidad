@@ -32,13 +32,17 @@ ADE2026_TpiUniversidad/
     ├── .env.ex
     ├── 1-ScriptCreacion_DB/
     │   ├── CreacionSTG_Universidad.sql
-    │   └── CreacionDWH_Universidad.sql
+    │   ├── CreacionDWH_Universidad.sql
+    │   └── creacion.py
     ├── 2-ETL_CargaInicial/
     │   ├── carga_staging.py
     │   ├── transformacion.py
+    │   ├── orquestador.py
     │   └── README.md
     ├── 3-ETL_Incremental/
     │   ├── carga_incremental.py
+    │   ├── run_test.py
+    │   ├── test_data_incremental.sql
     │   └── README.md
     └── Sources/
         ├── *.csv
@@ -200,6 +204,45 @@ docker exec mysql_container mysql -uroot -proot123 -e "SHOW DATABASES;"
 
 ---
 
+## Ejecución del ETL
+
+### Carga inicial a staging
+Ingresar al directorio `TP2/2-ETL_CargaInicial/` y ejecutar:
+```bash
+python carga_staging.py
+```
+
+### Transformación al DWH
+Ingresar al directorio `TP2/2-ETL_CargaInicial/` y ejecutar:
+```bash
+python transformacion.py
+```
+
+### Carga incremental simulada
+Ingresar al directorio `TP2/3-ETL_Incremental/` y ejecutar:
+```bash
+python carga_incremental.py
+```
+
+### Aplicación web
+```bash
+docker run -d -p 3000:3000 --name metabase metabase/metabase
+```
+
+Luego abrir:
+
+```text
+http://localhost:3000
+```
+Le das click a Comenzar y debes configurar la conexión a la base de datos.  
+Si se usa Docker se debe colocar en Host la ip del host donde se está ejecutando el contenedor.
+```
+hostname -I # en linux
+ipconfig # en windows
+```
+
+---
+
 ## Ejecutar la carga incremental dentro de Docker usando cron
 
 A continuación se explica cómo ejecutar `TP2/3-ETL_Incremental/carga_incremental.py` dentro de un contenedor Docker y programarlo para que se ejecute diariamente a las 22:00 con `cron`.
@@ -266,45 +309,6 @@ docker logs etl-cron | tail -n 200
 ```bash
 docker stop etl-cron
 docker rm etl-cron
-```
-
----
-
-## Ejecución del ETL
-
-### Carga inicial a staging
-Ingresar al directorio `TP2/2-ETL_CargaInicial/` y ejecutar:
-```bash
-python carga_staging.py
-```
-
-### Transformación al DWH
-Ingresar al directorio `TP2/2-ETL_CargaInicial/` y ejecutar:
-```bash
-python transformacion.py
-```
-
-### Carga incremental simulada
-Ingresar al directorio `TP2/3-ETL_Incremental/` y ejecutar:
-```bash
-python carga_incremental.py
-```
-
-### Aplicación web
-```bash
-docker run -d -p 3000:3000 --name metabase metabase/metabase
-```
-
-Luego abrir:
-
-```text
-http://localhost:3000
-```
-Le das click a Comenzar y debes configurar la conexión a la base de datos.  
-Si se usa Docker se debe colocar en Host la ip del host donde se está ejecutando el contenedor.
-```
-hostname -I # en linux
-ipconfig # en windows
 ```
 
 ---

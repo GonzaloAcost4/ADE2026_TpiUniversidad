@@ -913,12 +913,14 @@ def procesar_incremental() -> Dict:
                 )
 
                 # Consolidación local: solo para casos impactados por duplicados.
-                deltas_limpios["examenes"], _ = base_etl.consolidar_examenes_duplicados(
-                    deltas_limpios["examenes"],
-                    inscripciones_base
-                    if inscripciones_base is not None
-                    else pd.DataFrame(),
-                    mapa_inscripciones_dup,
+                deltas_limpios["examenes"], _, _ = (
+                    base_etl.consolidar_examenes_duplicados(
+                        deltas_limpios["examenes"],
+                        inscripciones_base
+                        if inscripciones_base is not None
+                        else pd.DataFrame(),
+                        mapa_inscripciones_dup,
+                    )
                 )
 
             # Validación con contexto histórico del DWH (regla de intentos).

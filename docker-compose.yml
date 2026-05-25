@@ -15,5 +15,16 @@ services:
       - ./TP2/1-ScriptCreacion_DB/CreacionSTG_Universidad.sql:/docker-entrypoint-initdb.d/01-CreacionSTG_Universidad.sql:ro
       - ./TP2/1-ScriptCreacion_DB/CreacionDWH_Universidad.sql:/docker-entrypoint-initdb.d/02-CreacionDWH_Universidad.sql:ro
 
+  metabase:
+    image: metabase/metabase
+    container_name: metabase
+    restart: always
+
+    ports:
+      - "3000:3000"
+
+    depends_on:
+      - mysql
+
 volumes:
   mysql_data:
