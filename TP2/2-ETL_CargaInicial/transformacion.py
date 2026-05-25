@@ -1443,62 +1443,60 @@ def cargar_tabla(
 
 def detectar_abandono_carrera() -> int:
     """
-    Detecta estudiantes que abandonaron la carrera analizando su rendimiento
-    por cuatrimestre (año + periodoAcademico).
+    Detecta estudiantes que abandonaron la carrera consolidando su rendimiento
+    a nivel ANUAL (uniendo C1 y C2 del mismo año).
 
-    Criterio: si TODAS las inscripciones del último cuatrimestre registrado
-    de un alumno terminaron en baja, cancelado, libre o abandono, se considera
-    que abandonó la carrera.
+    Criterio estricto: un alumno se considera desertor si en su último año
+    con inscripciones registradas cumple TODAS estas condiciones:
+      - Cero materias en estado 'Activa' en todo el año
+      - El 100% de sus materias terminaron en baja, cancelado, libre o abandono
 
-    La detección agrupa por (año, periodoAcademico) para tratar C1 y C2
-    como bloques independientes. Incluye 'libre' como estado de pérdida.
-    Solo marca abandono si el ÚLTIMO cuatrimestre del alumno es 100% perdido,
-    evitando falsos positivos de alumnos que tuvieron un mal cuatrimestre
-    pero volvieron a inscribirse después.
+    Esto evita los falsos positivos del enfoque por cuatrimestre, donde un
+    alumno con C1 perdido pero C2 activo se marcaba erróneamente.
 
     Ejecuta un UPDATE directo sobre dim_estudiante para marcar:
       - abandonoCarrera = TRUE
-      - anioAbandono = año del último cuatrimestre con actividad
+      - anioAbandono = último año académico con actividad
 
     Retorna la cantidad de estudiantes marcados como desertores.
     """
     query_detectar = text("""
-        WITH rendimiento_por_cuatrimestre AS (
+        WITH auditoria_anual_alumno AS (
             SELECT
                 f.alumnoSKey,
-                t.ano,
-                t.periodoAcademico,
-                MAX(t.fecha) AS max_fecha_periodo,
-                COUNT(f.InscripSKey) AS total_materias_inscriptas,
+                t.ano AS anio_academico,
+                COUNT(f.InscripSKey) AS total_materias_anual,
+                COUNT(CASE WHEN f.estado = 'Activa' THEN 1 END) AS cantidad_materias_activas,
                 COUNT(CASE
-                    WHEN f.estado LIKE '%baja%'
+                    WHEN f.estado LIKE '%libre%'
+                      OR f.estado LIKE '%baja%'
                       OR f.estado LIKE '%cancelado%'
-                      OR f.estado LIKE '%libre%'
                       OR f.abandono = 1
                     THEN 1
                 END) AS total_materias_perdidas
             FROM fact_inscripcion f
             JOIN dim_tiempo t ON f.tiempoSKey = t.tiempoSKey
-            GROUP BY f.alumnoSKey, t.ano, t.periodoAcademico
+            GROUP BY f.alumnoSKey, t.ano
         ),
-        ultimo_cuatrimestre_alumno AS (
-            SELECT alumnoSKey, MAX(max_fecha_periodo) AS ultima_fecha
-            FROM rendimiento_por_cuatrimestre
+        ultimo_anio_alumno AS (
+            SELECT alumnoSKey, MAX(anio_academico) AS ultimo_anio
+            FROM auditoria_anual_alumno
             GROUP BY alumnoSKey
         ),
-        cuatrimestre_final_critico AS (
+        anio_final_critico AS (
             SELECT
-                r.alumnoSKey,
-                r.ano
-            FROM rendimiento_por_cuatrimestre r
-            JOIN ultimo_cuatrimestre_alumno u
-                ON r.alumnoSKey = u.alumnoSKey
-               AND r.max_fecha_periodo = u.ultima_fecha
-            WHERE r.total_materias_inscriptas = r.total_materias_perdidas
-              AND r.total_materias_inscriptas > 0
+                a.alumnoSKey,
+                a.anio_academico
+            FROM auditoria_anual_alumno a
+            JOIN ultimo_anio_alumno u
+                ON a.alumnoSKey = u.alumnoSKey
+               AND a.anio_academico = u.ultimo_anio
+            WHERE a.cantidad_materias_activas = 0
+              AND a.total_materias_anual = a.total_materias_perdidas
+              AND a.total_materias_anual > 0
         )
-        SELECT alumnoSKey, ano
-        FROM cuatrimestre_final_critico
+        SELECT alumnoSKey, anio_academico
+        FROM anio_final_critico
     """)
 
     query_update = text("""
