@@ -11,7 +11,7 @@ env_path = current_dir.parent / ".env"
 # Cargar variables de entorno desde el archivo .env
 load_dotenv(dotenv_path=env_path)
 
-# Obtener variables de entorno (los nombres coinciden con lo propuesto en .env.ex)
+# Obtener variables de entorno
 DB_USER = os.getenv("DB_USER")
 DB_PASSWORD = os.getenv("DB_PASSWORD")
 DB_HOST = os.getenv("DB_HOST")

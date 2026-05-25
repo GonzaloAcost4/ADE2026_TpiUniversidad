@@ -1237,14 +1237,33 @@ def construir_dim_dictado(
     cursos: pd.DataFrame,
     docentes: pd.DataFrame,
     departamentos: pd.DataFrame,
+    programas: pd.DataFrame,
     facultades: pd.DataFrame,
 ) -> Tuple[pd.DataFrame, Dict]:
     total = len(dictados)
 
     df = dictados.merge(cursos, on="id_curso", how="left")
     df = df.merge(docentes, on="id_docente", how="left")
-    df = df.merge(departamentos, on="id_departamento", how="left")
-    df = df.merge(facultades, on="id_facultad", how="left")
+    # JOIN con departamentos para nombre del departamento (vía docente)
+    df = df.merge(
+        departamentos, on="id_departamento", how="left", suffixes=("", "_dep")
+    )
+    # La facultad se determina por el PROGRAMA del dictado, NO por el departamento
+    # del docente, ya que los docentes pueden dictar en programas de otras facultades.
+    # Cadena correcta: dictado.id_programa → programa.id_facultad → facultad
+    df = df.merge(
+        programas[["id_programa", "id_facultad"]].rename(
+            columns={"id_facultad": "id_facultad_programa"}
+        ),
+        on="id_programa",
+        how="left",
+    )
+    df = df.merge(
+        facultades,
+        left_on="id_facultad_programa",
+        right_on="id_facultad",
+        how="left",
+    )
 
     for columna, etiqueta in [
         ("nombre_curso", "curso"),
@@ -1584,6 +1603,95 @@ def cargar_tabla(
 
 
 # ============================================
+# DETECCIÓN DE ABANDONO DE CARRERA
+# ============================================
+
+
+def detectar_abandono_carrera() -> int:
+    """
+    Detecta estudiantes que abandonaron la carrera consolidando su rendimiento
+    a nivel ANUAL (uniendo C1 y C2 del mismo año).
+
+    Criterio estricto: un alumno se considera desertor si en su último año
+    con inscripciones registradas cumple TODAS estas condiciones:
+        - Cero materias en estado 'Activa' en todo el año
+        - El 100% de sus materias terminaron en baja, cancelado, libre o abandono
+
+    Esto evita los falsos positivos del enfoque por cuatrimestre, donde un
+    alumno con C1 perdido pero C2 activo se marcaba erróneamente.
+
+    Ejecuta un UPDATE directo sobre dim_estudiante para marcar:
+      - abandonoCarrera = TRUE
+      - anioAbandono = último año académico con actividad
+
+    Retorna la cantidad de estudiantes marcados como desertores.
+    """
+    query_detectar = text("""
+        WITH auditoria_anual_alumno AS (
+            SELECT
+                f.estudiante_skey,
+                t.anio AS anio_academico,
+                COUNT(f.inscripcion_skey) AS total_materias_anual,
+                COUNT(CASE WHEN f.estado = 'Activa' THEN 1 END) AS cantidad_materias_activas,
+                COUNT(CASE
+                WHEN f.estado LIKE '%libre%'
+                        OR f.estado LIKE '%baja%'
+                        OR f.estado LIKE '%cancelado%'
+                        OR f.abandono = 1
+                    THEN 1
+                END) AS total_materias_perdidas
+            FROM fact_inscripcion f
+            JOIN dim_tiempo t ON f.tiempo_skey = t.tiempo_skey
+            GROUP BY f.estudiante_skey, t.anio
+        ),
+        ultimo_anio_alumno AS (
+            SELECT estudiante_skey, MAX(anio_academico) AS ultimo_anio
+            FROM auditoria_anual_alumno
+            GROUP BY estudiante_skey
+        ),
+        anio_final_critico AS (
+            SELECT
+                a.estudiante_skey,
+                a.anio_academico
+            FROM auditoria_anual_alumno a
+            JOIN ultimo_anio_alumno u
+                ON a.estudiante_skey = u.estudiante_skey
+                AND a.anio_academico = u.ultimo_anio
+            WHERE a.cantidad_materias_activas = 0
+                AND a.total_materias_anual = a.total_materias_perdidas
+                AND a.total_materias_anual > 0
+        )
+        SELECT estudiante_skey, anio_academico
+        FROM anio_final_critico
+    """)
+
+    query_update = text("""
+        UPDATE dim_estudiante
+        SET abandono_carrera = TRUE,
+            anio_abandono = :anio
+        WHERE estudiante_skey = :sk
+          AND es_actual = TRUE
+    """)
+
+    with engine_dwh.connect() as conn:
+        desertores = conn.execute(query_detectar).fetchall()
+
+    if not desertores:
+        LoggerManager.info("Detección abandono: no se encontraron desertores")
+        return 0
+
+    with engine_dwh.begin() as conn:
+        for sk, anio in desertores:
+            conn.execute(query_update, {"anio": int(anio), "sk": int(sk)})
+
+    LoggerManager.info(
+        f"Detección abandono: {len(desertores)} estudiantes marcados "
+        f"con abandono_carrera=TRUE"
+    )
+    return len(desertores)
+
+
+# ============================================
 # ORQUESTACIÓN
 # ============================================
 
@@ -1759,6 +1867,7 @@ def ejecutar_transformacion() -> Dict:
         datos["cursos"],
         datos["docentes"],
         datos["departamentos"],
+        datos["programas"],
         datos["facultades"],
     )
 
@@ -1804,7 +1913,14 @@ def ejecutar_transformacion() -> Dict:
         "fact_evaluacion_dictado", fact_evaluacion, reporte, stats_fact_evaluacion
     )
 
-    # 8. Reporte final.
+    # 8. Detección de abandono de carrera.
+    #    Se ejecuta DESPUÉS de cargar hechos porque necesita fact_inscripcion
+    #    para analizar el último periodo de cada estudiante.
+    LoggerManager.info("Detección de abandono de carrera")
+    abandonos = detectar_abandono_carrera()
+    reporte["abandono_carrera"] = {"desertores_detectados": abandonos}
+
+    # 9. Reporte final.
     imprimir_reporte(reporte)
     return reporte
 
@@ -1935,8 +2051,14 @@ def imprimir_reporte(reporte: Dict) -> None:
     )
 
     print("\nResumen general:")
-    LoggerManager.info(f"Total insertados en DWH: {total_insertados}")
-    LoggerManager.info(f"Total errores de inserción en DWH: {total_errores}")
+    LoggerManager.info(
+        f"Total insertados en DWH: {total_insertados} | Total errores de inserción en DWH: {total_errores}"
+    )
+    abandono_stats = reporte.get("abandono_carrera", {})
+    if abandono_stats:
+        LoggerManager.info(
+            f"  Abandono carrera: desertores detectados={abandono_stats.get('desertores_detectados', 0)}"
+        )
 
     if total_errores == 0:
         LoggerManager.info("Transformación dimensional completada exitosamente")
