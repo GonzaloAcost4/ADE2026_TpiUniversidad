@@ -1622,25 +1622,25 @@ def cargar_tabla(
 def detectar_abandono_carrera() -> Dict[str, int]:
     """
     Detecta tres tipos mutuamente excluyentes de abandono de carrera y marca
-    abandonoCarrera=TRUE + anioAbandono en dim_estudiante.
+    abandono_carrera=TRUE + anio_abandono en dim_estudiante.
 
     Tipo 1 – Desertor Oficial:
         Último año con inscripciones registradas tiene TODAS las materias en
         estado baja/libre/cancelado/abandono (0 activas).  Se consolida a
         nivel ANUAL (C1+C2) para evitar falsos positivos por cuatrimestre.
-        anioAbandono = último año con actividad.
+        anio_abandono = último año con actividad.
 
     Tipo 2 – Inactivo Transaccional:
         Tiene inscripciones históricas pero NINGUNA en el año máximo
         registrado en el DWH (ej. cursó hasta 2023 pero no se inscribió
         en 2024).  No fue detectado por Tipo 1 porque directamente no
         figura en el último año.
-        anioAbandono = último año en que tuvo inscripciones.
+        anio_abandono = último año en que tuvo inscripciones.
 
     Tipo 3 – Ingresante Sin Cursada:
         Figura en dim_estudiante (padrón) pero NO tiene NINGUNA inscripción
         en fact_inscripcion.  Ingresó al sistema pero jamás cursó.
-        anioAbandono = anioIngreso.
+        anio_abandono = anioIngreso.
 
     Los tipos se ejecutan secuencialmente; cada uno excluye a los
     estudiantes ya marcados por los anteriores, garantizando cero
@@ -1650,9 +1650,9 @@ def detectar_abandono_carrera() -> Dict[str, int]:
     """
     query_update = text("""
         UPDATE dim_estudiante
-        SET abandonoCarrera = TRUE,
-            anioAbandono = :anio
-        WHERE alumnoSKey = :sk
+        SET abandono_carrera = TRUE,
+            anio_abandono = :anio
+        WHERE estudiante_skey = :sk
             AND es_actual = TRUE
     """)
 
@@ -1726,31 +1726,31 @@ def detectar_abandono_carrera() -> Dict[str, int]:
     # ------------------------------------------------------------------
     query_tipo2 = text("""
         WITH ano_maximo AS (
-            SELECT MAX(t.ano) AS ano_max
+            SELECT MAX(t.anio) AS ano_max
             FROM fact_inscripcion f
-            JOIN dim_tiempo t ON f.tiempoSKey = t.tiempoSKey
+            JOIN dim_tiempo t ON f.tiempo_skey = t.tiempo_skey
         ),
         alumnos_en_ano_max AS (
-            SELECT DISTINCT f.alumnoSKey
+            SELECT DISTINCT f.estudiante_skey
             FROM fact_inscripcion f
-            JOIN dim_tiempo t ON f.tiempoSKey = t.tiempoSKey
+            JOIN dim_tiempo t ON f.tiempo_skey = t.tiempo_skey
             CROSS JOIN ano_maximo m
-            WHERE t.ano = m.ano_max
+            WHERE t.anio = m.ano_max
         ),
         ultimo_anio_por_alumno AS (
-            SELECT f.alumnoSKey, MAX(t.ano) AS ultimo_anio
+            SELECT f.estudiante_skey, MAX(t.anio) AS ultimo_anio
             FROM fact_inscripcion f
-            JOIN dim_tiempo t ON f.tiempoSKey = t.tiempoSKey
-            GROUP BY f.alumnoSKey
+            JOIN dim_tiempo t ON f.tiempo_skey = t.tiempo_skey
+            GROUP BY f.estudiante_skey
         )
-        SELECT u.alumnoSKey, u.ultimo_anio AS anio_academico
+        SELECT u.estudiante_skey, u.ultimo_anio AS anio_academico
         FROM ultimo_anio_por_alumno u
         JOIN dim_estudiante e
-            ON u.alumnoSKey = e.alumnoSKey AND e.es_actual = TRUE
+            ON u.estudiante_skey = e.estudiante_skey AND e.es_actual = TRUE
         LEFT JOIN alumnos_en_ano_max a
-            ON u.alumnoSKey = a.alumnoSKey
-        WHERE a.alumnoSKey IS NULL
-            AND e.abandonoCarrera = FALSE
+            ON u.estudiante_skey = a.estudiante_skey
+        WHERE a.estudiante_skey IS NULL
+            AND e.abandono_carrera = FALSE
     """)
 
     with engine_dwh.connect() as conn:
@@ -1775,12 +1775,12 @@ def detectar_abandono_carrera() -> Dict[str, int]:
     #   jamás se inscribieron.
     # ------------------------------------------------------------------
     query_tipo3 = text("""
-        SELECT e.alumnoSKey, e.anioIngreso AS anio_academico
+        SELECT e.estudiante_skey, e.anio_ingreso AS anio_academico
         FROM dim_estudiante e
-        LEFT JOIN fact_inscripcion f ON e.alumnoSKey = f.alumnoSKey
-        WHERE f.alumnoSKey IS NULL
+        LEFT JOIN fact_inscripcion f ON e.estudiante_skey = f.estudiante_skey
+        WHERE f.estudiante_skey IS NULL
             AND e.es_actual = TRUE
-            AND e.abandonoCarrera = FALSE
+            AND e.abandono_carrera = FALSE
     """)
 
     with engine_dwh.connect() as conn:
