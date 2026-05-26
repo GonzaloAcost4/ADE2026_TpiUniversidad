@@ -1000,10 +1000,18 @@ def construir_dim_tiempo(fechas: Iterable[Optional[date]]) -> Tuple[pd.DataFrame
 
 
 def construir_dim_estudiante(
-    estudiantes: pd.DataFrame, programas: pd.DataFrame
+    estudiantes: pd.DataFrame, programas: pd.DataFrame, facultades: pd.DataFrame
 ) -> Tuple[pd.DataFrame, Dict]:
     total = len(estudiantes)
     df = estudiantes.merge(programas, on="id_programa", how="left")
+    # Cadena: estudiante.id_programa → programa.id_facultad → facultad.nombre_facultad
+    df = df.merge(facultades[["id_facultad", "nombre_facultad"]], on="id_facultad", how="left")
+
+    faltan_facultades = df["nombre_facultad"].isna().sum()
+    if faltan_facultades > 0:
+        LoggerManager.warning(
+            f"estudiante: {faltan_facultades} estudiantes sin facultad encontrada; se cargan con FacultadPrograma NULL"
+        )
 
     faltan_programas = df["nombre_programa"].isna().sum()
     if faltan_programas > 0:
@@ -1020,6 +1028,7 @@ def construir_dim_estudiante(
                 "nombre_programa": "nombrePrograma",
                 "tipo_programa": "tipoPrograma",
                 "duracion_anios_programa": "duracionAniosPrograma",
+                "nombre_facultad": "FacultadPrograma",
             }
         )
         .assign(
@@ -1055,6 +1064,7 @@ def construir_dim_estudiante(
         "tipoPrograma",
         "duracionAniosPrograma",
         "anioPlanPrograma",
+        "FacultadPrograma",
         "valid_from",
         "valid_to",
         "es_actual",
@@ -1441,26 +1451,54 @@ def cargar_tabla(
 # ============================================
 
 
-def detectar_abandono_carrera() -> int:
+def detectar_abandono_carrera() -> Dict[str, int]:
     """
-    Detecta estudiantes que abandonaron la carrera consolidando su rendimiento
-    a nivel ANUAL (uniendo C1 y C2 del mismo año).
+    Detecta tres tipos mutuamente excluyentes de abandono de carrera y marca
+    abandonoCarrera=TRUE + anioAbandono en dim_estudiante.
 
-    Criterio estricto: un alumno se considera desertor si en su último año
-    con inscripciones registradas cumple TODAS estas condiciones:
-      - Cero materias en estado 'Activa' en todo el año
-      - El 100% de sus materias terminaron en baja, cancelado, libre o abandono
+    Tipo 1 – Desertor Oficial:
+        Último año con inscripciones registradas tiene TODAS las materias en
+        estado baja/libre/cancelado/abandono (0 activas).  Se consolida a
+        nivel ANUAL (C1+C2) para evitar falsos positivos por cuatrimestre.
+        anioAbandono = último año con actividad.
 
-    Esto evita los falsos positivos del enfoque por cuatrimestre, donde un
-    alumno con C1 perdido pero C2 activo se marcaba erróneamente.
+    Tipo 2 – Inactivo Transaccional:
+        Tiene inscripciones históricas pero NINGUNA en el año máximo
+        registrado en el DWH (ej. cursó hasta 2023 pero no se inscribió
+        en 2024).  No fue detectado por Tipo 1 porque directamente no
+        figura en el último año.
+        anioAbandono = último año en que tuvo inscripciones.
 
-    Ejecuta un UPDATE directo sobre dim_estudiante para marcar:
-      - abandonoCarrera = TRUE
-      - anioAbandono = último año académico con actividad
+    Tipo 3 – Ingresante Sin Cursada:
+        Figura en dim_estudiante (padrón) pero NO tiene NINGUNA inscripción
+        en fact_inscripcion.  Ingresó al sistema pero jamás cursó.
+        anioAbandono = anioIngreso.
 
-    Retorna la cantidad de estudiantes marcados como desertores.
+    Los tipos se ejecutan secuencialmente; cada uno excluye a los
+    estudiantes ya marcados por los anteriores, garantizando cero
+    solapamiento.
+
+    Retorna un dict con el desglose y el total.
     """
-    query_detectar = text("""
+    query_update = text("""
+        UPDATE dim_estudiante
+        SET abandonoCarrera = TRUE,
+            anioAbandono = :anio
+        WHERE alumnoSKey = :sk
+          AND es_actual = TRUE
+    """)
+
+    resultado = {
+        "tipo1_desertor_oficial": 0,
+        "tipo2_inactivo_transaccional": 0,
+        "tipo3_ingresante_sin_cursada": 0,
+        "total": 0,
+    }
+
+    # ------------------------------------------------------------------
+    # Tipo 1 – Desertor Oficial
+    # ------------------------------------------------------------------
+    query_tipo1 = text("""
         WITH auditoria_anual_alumno AS (
             SELECT
                 f.alumnoSKey,
@@ -1499,30 +1537,117 @@ def detectar_abandono_carrera() -> int:
         FROM anio_final_critico
     """)
 
-    query_update = text("""
-        UPDATE dim_estudiante
-        SET abandonoCarrera = TRUE,
-            anioAbandono = :anio
-        WHERE alumnoSKey = :sk
-          AND es_actual = TRUE
+    with engine_dwh.connect() as conn:
+        desertores_t1 = conn.execute(query_tipo1).fetchall()
+
+    if desertores_t1:
+        with engine_dwh.begin() as conn:
+            for sk, anio in desertores_t1:
+                conn.execute(query_update, {"anio": int(anio), "sk": int(sk)})
+        resultado["tipo1_desertor_oficial"] = len(desertores_t1)
+        LoggerManager.info(
+            f"Detección abandono Tipo 1 (Desertor Oficial): "
+            f"{len(desertores_t1)} estudiantes marcados"
+        )
+    else:
+        LoggerManager.info("Detección abandono Tipo 1: sin desertores oficiales")
+
+    # ------------------------------------------------------------------
+    # Tipo 2 – Inactivo Transaccional (cursó antes pero no en año máximo)
+    #   Se ejecuta DESPUÉS de Tipo 1 para que el filtro
+    #   `abandonoCarrera = FALSE` ya excluya a los recién marcados.
+    # ------------------------------------------------------------------
+    query_tipo2 = text("""
+        WITH ano_maximo AS (
+            SELECT MAX(t.ano) AS ano_max
+            FROM fact_inscripcion f
+            JOIN dim_tiempo t ON f.tiempoSKey = t.tiempoSKey
+        ),
+        alumnos_en_ano_max AS (
+            SELECT DISTINCT f.alumnoSKey
+            FROM fact_inscripcion f
+            JOIN dim_tiempo t ON f.tiempoSKey = t.tiempoSKey
+            CROSS JOIN ano_maximo m
+            WHERE t.ano = m.ano_max
+        ),
+        ultimo_anio_por_alumno AS (
+            SELECT f.alumnoSKey, MAX(t.ano) AS ultimo_anio
+            FROM fact_inscripcion f
+            JOIN dim_tiempo t ON f.tiempoSKey = t.tiempoSKey
+            GROUP BY f.alumnoSKey
+        )
+        SELECT u.alumnoSKey, u.ultimo_anio AS anio_academico
+        FROM ultimo_anio_por_alumno u
+        JOIN dim_estudiante e
+            ON u.alumnoSKey = e.alumnoSKey AND e.es_actual = TRUE
+        LEFT JOIN alumnos_en_ano_max a
+            ON u.alumnoSKey = a.alumnoSKey
+        WHERE a.alumnoSKey IS NULL
+          AND e.abandonoCarrera = FALSE
     """)
 
     with engine_dwh.connect() as conn:
-        desertores = conn.execute(query_detectar).fetchall()
+        desertores_t2 = conn.execute(query_tipo2).fetchall()
 
-    if not desertores:
-        LoggerManager.info("Detección abandono: no se encontraron desertores")
-        return 0
+    if desertores_t2:
+        with engine_dwh.begin() as conn:
+            for sk, anio in desertores_t2:
+                anio_val = int(anio) if anio is not None else None
+                conn.execute(query_update, {"anio": anio_val, "sk": int(sk)})
+        resultado["tipo2_inactivo_transaccional"] = len(desertores_t2)
+        LoggerManager.info(
+            f"Detección abandono Tipo 2 (Inactivo Transaccional): "
+            f"{len(desertores_t2)} estudiantes marcados"
+        )
+    else:
+        LoggerManager.info("Detección abandono Tipo 2: sin inactivos transaccionales")
 
-    with engine_dwh.begin() as conn:
-        for sk, anio in desertores:
-            conn.execute(query_update, {"anio": int(anio), "sk": int(sk)})
+    # ------------------------------------------------------------------
+    # Tipo 3 – Ingresante Sin Cursada (0 inscripciones en toda la historia)
+    #   Usa LEFT JOIN contra fact_inscripcion; los que no matchean
+    #   jamás se inscribieron.
+    # ------------------------------------------------------------------
+    query_tipo3 = text("""
+        SELECT e.alumnoSKey, e.anioIngreso AS anio_academico
+        FROM dim_estudiante e
+        LEFT JOIN fact_inscripcion f ON e.alumnoSKey = f.alumnoSKey
+        WHERE f.alumnoSKey IS NULL
+          AND e.es_actual = TRUE
+          AND e.abandonoCarrera = FALSE
+    """)
+
+    with engine_dwh.connect() as conn:
+        desertores_t3 = conn.execute(query_tipo3).fetchall()
+
+    if desertores_t3:
+        with engine_dwh.begin() as conn:
+            for sk, anio in desertores_t3:
+                anio_val = int(anio) if anio is not None else None
+                conn.execute(query_update, {"anio": anio_val, "sk": int(sk)})
+        resultado["tipo3_ingresante_sin_cursada"] = len(desertores_t3)
+        LoggerManager.info(
+            f"Detección abandono Tipo 3 (Ingresante Sin Cursada): "
+            f"{len(desertores_t3)} estudiantes marcados"
+        )
+    else:
+        LoggerManager.info("Detección abandono Tipo 3: sin ingresantes fantasma")
+
+    # ------------------------------------------------------------------
+    # Resumen consolidado
+    # ------------------------------------------------------------------
+    resultado["total"] = (
+        resultado["tipo1_desertor_oficial"]
+        + resultado["tipo2_inactivo_transaccional"]
+        + resultado["tipo3_ingresante_sin_cursada"]
+    )
 
     LoggerManager.info(
-        f"Detección abandono: {len(desertores)} estudiantes marcados "
-        f"con abandonoCarrera=TRUE"
+        f"Detección abandono TOTAL: {resultado['total']} estudiantes marcados "
+        f"(T1={resultado['tipo1_desertor_oficial']} | "
+        f"T2={resultado['tipo2_inactivo_transaccional']} | "
+        f"T3={resultado['tipo3_ingresante_sin_cursada']})"
     )
-    return len(desertores)
+    return resultado
 
 
 # ============================================
@@ -1655,7 +1780,7 @@ def ejecutar_transformacion() -> Dict:
 
     dim_tiempo, stats_tiempo = construir_dim_tiempo(fechas_tiempo)
     dim_estudiante, stats_estudiante = construir_dim_estudiante(
-        datos["estudiantes"], datos["programas"]
+        datos["estudiantes"], datos["programas"], datos["facultades"]
     )
     dim_dictado, stats_dictado = construir_dim_dictado(
         datos["dictados"],
@@ -1710,7 +1835,7 @@ def ejecutar_transformacion() -> Dict:
     #    para analizar el último periodo de cada estudiante.
     LoggerManager.info("Detección de abandono de carrera")
     abandonos = detectar_abandono_carrera()
-    reporte["abandono_carrera"] = {"desertores_detectados": abandonos}
+    reporte["abandono_carrera"] = abandonos
 
     # 9. Reporte final.
     imprimir_reporte(reporte)
@@ -1758,7 +1883,13 @@ def imprimir_reporte(reporte: Dict) -> None:
 
     abandono_stats = reporte.get("abandono_carrera", {})
     if abandono_stats:
-        LoggerManager.info(f"  Abandono carrera: desertores detectados={abandono_stats.get('desertores_detectados', 0)}")
+        LoggerManager.info(
+            f"  Abandono carrera: "
+            f"T1 Desertor Oficial={abandono_stats.get('tipo1_desertor_oficial', 0)} | "
+            f"T2 Inactivo Transaccional={abandono_stats.get('tipo2_inactivo_transaccional', 0)} | "
+            f"T3 Ingresante Sin Cursada={abandono_stats.get('tipo3_ingresante_sin_cursada', 0)} | "
+            f"TOTAL={abandono_stats.get('total', 0)}"
+        )
 
     if total_errores == 0:
         LoggerManager.info("Transformación dimensional completada exitosamente")

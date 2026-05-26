@@ -61,6 +61,7 @@ CREATE TABLE dim_estudiante (
     tipoPrograma VARCHAR(50),
     duracionAniosPrograma INT,
     anioPlanPrograma INT,
+    FacultadPrograma VARCHAR(100),
     valid_from DATE NOT NULL,
     valid_to DATE,
     es_actual BOOLEAN DEFAULT TRUE,
