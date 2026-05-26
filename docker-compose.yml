@@ -16,7 +16,7 @@ services:
       - ./TP2/1-ScriptCreacion_DB/CreacionDWH_Universidad.sql:/docker-entrypoint-initdb.d/02-CreacionDWH_Universidad.sql:ro
 
   metabase:
-    image: metabase/metabase
+    image: metabase/metabase:v0.56.6
     container_name: metabase
     restart: always
 
@@ -26,5 +26,9 @@ services:
     depends_on:
       - mysql
 
+    volumes:
+      - metabase_data:/metabase.db
+
 volumes:
   mysql_data:
+  metabase_data:
