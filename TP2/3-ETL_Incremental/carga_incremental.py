@@ -486,6 +486,7 @@ def aplicar_scd_estudiante(dim_estudiante_delta: pd.DataFrame) -> Dict[str, int]
         "tipo_programa",
         "duracion_programa",
         "anio_plan_programa",
+        "facultad_programa",
     ]
     columnas_scd1 = [
         "genero",
@@ -827,7 +828,9 @@ def procesar_incremental() -> Dict:
         dim_estudiante_delta = pd.DataFrame()
         if not deltas_limpios.get("estudiantes", pd.DataFrame()).empty:
             dim_estudiante_delta, _ = base_etl.construir_dim_estudiante(
-                deltas_limpios["estudiantes"], lookups["programas"]
+                deltas_limpios["estudiantes"],
+                lookups["programas"],
+                lookups["facultades"],
             )
         scd_estudiante = aplicar_scd_estudiante(dim_estudiante_delta)
 
@@ -976,7 +979,7 @@ def procesar_incremental() -> Dict:
             "scd_estudiante": scd_estudiante,
             "scd_dictado": scd_dictado,
             "hechos_insertados": hechos_insertados,
-            "abandono_carrera": {"desertores_detectados": abandonos},
+            "abandono_carrera": abandonos,
         }
     except Exception as exc:
         logger.error(f"Error en carga incremental: {str(exc)}", exc_info=True)
