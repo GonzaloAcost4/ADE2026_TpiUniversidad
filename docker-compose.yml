@@ -4,6 +4,8 @@ services:
     container_name: mysql_container
     restart: always
 
+    command: --default-authentication-plugin=mysql_native_password
+
     environment:
       MYSQL_ROOT_PASSWORD: root123
 
@@ -16,7 +18,7 @@ services:
       - ./TP2/1-ScriptCreacion_DB/CreacionDWH_Universidad.sql:/docker-entrypoint-initdb.d/02-CreacionDWH_Universidad.sql:ro
 
   metabase:
-    image: metabase/metabase:v0.56.6
+    image: metabase/metabase:v0.61.2.10
     container_name: metabase
     restart: always
 
